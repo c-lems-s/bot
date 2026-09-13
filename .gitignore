@@ -1,0 +1,17 @@
+# Fichiers de configuration contenant VOS identifiants personnels
+config.json
+store_blacklist.json
+store_blacklist.json.tmp
+store_blacklist.json.imported
+.env
+
+# Cloudflare Tunnel (secrets locaux)
+cloudflare/config.yml
+cloudflare/*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/

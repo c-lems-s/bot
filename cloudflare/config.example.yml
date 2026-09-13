@@ -1,0 +1,10 @@
+# Copier vers cloudflare/config.yml et adapter.
+# Ne pas committer config.yml ni les credentials *.json
+
+tunnel: VOTRE-TUNNEL-ID
+credentials-file: C:\Users\VOTRE_USER\.cloudflared\VOTRE-TUNNEL-ID.json
+
+ingress:
+  - hostname: miniapp.tondomaine.com
+    service: http://127.0.0.1:8080
+  - service: http_status:404

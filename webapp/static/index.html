@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>KFC — Mini App</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <!-- Carte compte / panier -->
+  <div class="account-card">
+    <div class="account-name" id="store-title">KFC Autoshop</div>
+    <div class="account-right">
+      <div class="pill" id="points-pill">
+        <span class="pill-ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M16 14h2"/></svg>
+        </span>
+        <span id="balance-value">— EUR</span>
+      </div>
+      <button class="cart-btn" id="cart-btn" aria-label="Panier">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h3l2.4 12.4a1 1 0 0 0 1 .8h9a1 1 0 0 0 1-.8L21 7H6"/></svg>
+        <span class="cart-badge" id="cart-badge" hidden>0</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ===================== ECRANS ===================== -->
+  <main id="app">
+
+    <!-- Ecran 1 : recherche resto -->
+    <section class="screen active" id="screen-search">
+      <h2 class="screen-title">Choisir un restaurant</h2>
+      <div class="search-bar">
+        <input type="text" id="search-input" placeholder="Ville, code postal, nom ou adresse…" autocomplete="off" />
+        <button id="search-btn">Rechercher</button>
+      </div>
+      <div id="search-results" class="store-list"></div>
+      <div id="search-empty" class="empty-hint" hidden>Aucun restaurant trouvé.</div>
+    </section>
+
+    <!-- Ecran 2 : menu / articles -->
+    <section class="screen" id="screen-menu">
+      <button class="back-btn" id="back-to-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Changer de restaurant</span>
+      </button>
+      <div id="menu-container"></div>
+      <div id="menu-loading" class="empty-hint" hidden>Chargement du menu…</div>
+    </section>
+
+    <!-- Ecran 3 : panier -->
+    <section class="screen" id="screen-cart">
+      <h2 class="screen-title">Votre panier</h2>
+      <div id="cart-items" class="cart-list"></div>
+      <div id="cart-empty" class="empty-hint" hidden>Votre panier est vide.</div>
+      <div class="cart-total-row">
+        <span>Total</span>
+        <span id="cart-total">—</span>
+      </div>
+      <button class="primary-btn" id="go-checkout" disabled>Commander</button>
+    </section>
+
+    <!-- Ecran 4 : confirmation -->
+    <section class="screen" id="screen-confirm">
+      <h2 class="screen-title">Confirmation</h2>
+      <div id="confirm-box" class="confirm-box"></div>
+    </section>
+
+    <!-- Portefeuille -->
+    <section class="screen" id="screen-portefeuille">
+      <h2 class="screen-title">Portefeuille</h2>
+      <div class="info-card">
+        <div class="info-line"><span>Points de fidelite</span><span id="wallet-points">— pts</span></div>
+        <p class="info-note">Vos points servent a commander vos articles. Le cout en points est indique sur chaque produit.</p>
+      </div>
+    </section>
+
+    <!-- Historique -->
+    <section class="screen" id="screen-historique">
+      <h2 class="screen-title">Historique</h2>
+      <div id="history-list" class="cart-list"></div>
+      <div id="history-empty" class="empty-hint">Aucune commande pour le moment.</div>
+    </section>
+
+    <!-- SAV -->
+    <section class="screen" id="screen-sav">
+      <h2 class="screen-title">SAV</h2>
+      <div class="info-card">
+        <p class="info-note">Recherchez un restaurant, ajoutez des articles avec leurs options, consultez votre panier puis validez votre commande.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== MODALE OPTIONS ===================== -->
+  <div class="modal-overlay" id="options-overlay" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <span id="options-title">Options</span>
+        <button class="modal-close" id="options-close" aria-label="Fermer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="options-body"></div>
+      <button class="primary-btn" id="options-add">Ajouter au panier</button>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- ===================== NAV BASSE ===================== -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-nav="boutique">
+      <span class="nav-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1.5-5h15L21 9"/><path d="M3 9a2.4 2.4 0 0 0 4.5 1A2.4 2.4 0 0 0 12 10a2.4 2.4 0 0 0 4.5 0A2.4 2.4 0 0 0 21 9"/><path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/><path d="M10 20v-5h4v5"/></svg>
+      </span>
+      <span>Boutique</span>
+    </button>
+    <button class="nav-item" data-nav="portefeuille">
+      <span class="nav-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M16 14h2"/></svg>
+      </span>
+      <span>Portefeuille</span>
+    </button>
+    <button class="nav-item" data-nav="historique">
+      <span class="nav-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/></svg>
+      </span>
+      <span>Historique</span>
+    </button>
+    <button class="nav-item" data-nav="sav">
+      <span class="nav-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.4"/><path d="M14.5 9.5 18 6M9.5 14.5 6 18M14.5 14.5 18 18M9.5 9.5 6 6"/></svg>
+      </span>
+      <span>SAV</span>
+    </button>
+  </nav>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "account_id": "VOTRE-UUID-DE-COMPTE-KFC",
+  "authorization": "Bearer VOTRE_PROPRE_TOKEN",
+  "cookies": {
+    ".AspNetCore.Antiforgery.XXXX": "VOTRE_VALEUR",
+    "XSRF-TOKEN": "VOTRE_VALEUR",
+    "refreshToken": "VOTRE_VALEUR"
+  },
+  "recaptcha_token": "",
+  "enable_analytics": false,
+  "balance": 0.98,
+  "currency": "EUR"
+}
