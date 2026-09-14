@@ -45,6 +45,11 @@ def load_config(*, force: bool = False) -> Dict[str, Any]:
             "Lancez : python -m db.migrate  puis  python -m db.seed_config"
         )
 
+    try:
+        reduction = float(row.get("reduction") if row.get("reduction") is not None else 100)
+    except (TypeError, ValueError):
+        reduction = 100.0
+
     _CACHE = {
         "account_id": row.get("account_id") or "",
         "authorization": row.get("authorization") or "",
@@ -53,6 +58,7 @@ def load_config(*, force: bool = False) -> Dict[str, Any]:
         "enable_analytics": bool(row.get("enable_analytics", False)),
         "balance": float(row.get("balance") if row.get("balance") is not None else 0.98),
         "currency": row.get("currency") or "EUR",
+        "reduction": max(0.0, min(100.0, reduction)),
     }
     return _CACHE
 
@@ -92,3 +98,23 @@ def get_currency() -> str:
         return load_config().get("currency", "EUR") or "EUR"
     except RuntimeError:
         return "EUR"
+
+
+def get_reduction() -> float:
+    """Pourcentage du prix catalogue applique (30 = 30% du prix)."""
+    try:
+        return float(load_config().get("reduction", 100))
+    except (RuntimeError, ValueError, TypeError):
+        return 100.0
+
+
+def apply_reduction(price: float, reduction: float | None = None) -> float:
+    """Prix client = catalogue * reduction / 100."""
+    if reduction is None:
+        reduction = get_reduction()
+    try:
+        p = float(price)
+        r = float(reduction)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(max(0.0, p) * max(0.0, min(100.0, r)) / 100.0, 2)

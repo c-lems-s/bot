@@ -59,6 +59,11 @@ def seed_config_from_file(path: str | None = None, *, force: bool = False) -> bo
     except (TypeError, ValueError):
         balance = 0.98
 
+    try:
+        reduction = float(data.get("reduction", 100))
+    except (TypeError, ValueError):
+        reduction = 100.0
+
     config_repo.upsert(
         account_id=str(data.get("account_id") or ""),
         authorization=str(data.get("authorization") or ""),
@@ -67,6 +72,7 @@ def seed_config_from_file(path: str | None = None, *, force: bool = False) -> bo
         enable_analytics=bool(data.get("enable_analytics", False)),
         balance=balance,
         currency=str(data.get("currency") or "EUR"),
+        reduction=reduction,
     )
     clear_cache()
     print(f"[seed_config] Importe depuis {path} -> table config")

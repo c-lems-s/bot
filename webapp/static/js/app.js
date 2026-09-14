@@ -174,7 +174,10 @@ function renderMenu(categories, connected) {
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h10l-1 12H8L7 8z"/><path d="M6 8h12"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>
            </div>`;
       const priceHtml = available
-        ? `<div class="product-price">${Number(it.price).toFixed(2)} €</div>`
+        ? `<div class="product-price-row">
+             <span class="price-old">${Number(it.originalPrice != null ? it.originalPrice : it.price).toFixed(2)} €</span>
+             <span class="price-new">${Number(it.price).toFixed(2)} €</span>
+           </div>`
         : `<div class="product-price soon">Bientôt disponible</div>`;
       card.innerHTML = `
         ${thumb}
@@ -416,7 +419,9 @@ function renderCart(data) {
       row.className = "cart-row";
       const price =
         it.price != null
-          ? `<span class="c-pts">${Number(it.price).toFixed(2)} ${currency}</span>`
+          ? (it.originalPrice != null && Number(it.originalPrice) !== Number(it.price)
+              ? `<span class="c-price-wrap"><span class="price-old">${Number(it.originalPrice).toFixed(2)}</span><span class="price-new">${Number(it.price).toFixed(2)} ${currency}</span></span>`
+              : `<span class="c-pts">${Number(it.price).toFixed(2)} ${currency}</span>`)
           : "";
       const opts = (it.options && it.options.length)
         ? `<div class="c-opts">${escapeHtml(it.options.join(" · "))}</div>`

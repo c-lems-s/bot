@@ -24,7 +24,7 @@ load_dotenv()
 
 from kfc import basket, cities, loyalty, order  # noqa: E402
 from kfc.kfc_api import stores  # noqa: E402
-from kfc.config import get_account_id, get_currency  # noqa: E402
+from kfc.config import apply_reduction, get_account_id, get_currency, get_reduction  # noqa: E402
 from kfc import store_blacklist  # noqa: E402
 from kfc.loyalty import LOYALTY_MATCH_MIN, IsStoreEligible  # noqa: E402
 from db import history as order_history  # noqa: E402
@@ -64,6 +64,7 @@ def _build_loyalty_menu(loyaltyMenu, session_id: int):
     """Categories UI via article.label ; inconnus -> Bientot disponible."""
     menu_items = {}
     raw_items = []
+    reduction = get_reduction()
 
     for items in loyaltyMenu.values():
         for it in items:
@@ -80,10 +81,12 @@ def _build_loyalty_menu(loyaltyMenu, session_id: int):
         art = catalog.get(item_id)
         if art and art.get("price") is not None and str(art.get("label") or "").strip():
             label = str(art["label"]).strip()
-            price = float(art["price"])
+            original_price = float(art["price"])
+            price = apply_reduction(original_price, reduction)
             available = True
         else:
             label = SOON_LABEL
+            original_price = None
             price = None
             available = False
 
@@ -96,7 +99,9 @@ def _build_loyalty_menu(loyaltyMenu, session_id: int):
                 "id": item_id,
                 "name": it["name"],
                 "cost": it.get("cost"),
+                "originalPrice": original_price,
                 "price": price,
+                "reduction": reduction,
                 "available": available,
                 "image": it.get("image", ""),
                 "hasOptions": "modgrps" in it,
@@ -250,6 +255,7 @@ def api_config():
             "configured": _account_configured(),
             "balance": balance,
             "currency": get_currency(),
+            "reduction": get_reduction(),
             "user": {
                 "id": user["id"],
                 "telegramId": user["telegram_id"],
@@ -368,6 +374,8 @@ def api_select_store():
             "matchedItems": matched_count,
             "available": True,
             "sessionId": sess["id"],
+            "reduction": get_reduction(),
+            "currency": get_currency(),
         }
     )
 
@@ -393,11 +401,15 @@ def api_item_options():
         return jsonify(
             {"error": "Article bientot disponible — non commandable."}
         ), 403
+    original = float(art["price"])
+    reduction = get_reduction()
     return jsonify(
         {
             "name": it["name"],
             "cost": it.get("cost", 0),
-            "price": float(art["price"]),
+            "originalPrice": original,
+            "price": apply_reduction(original, reduction),
+            "reduction": reduction,
             "modgrps": _clean_modgrps(it.get("modgrps", [])),
         }
     )
@@ -433,9 +445,12 @@ def api_add_item():
         ), 403
 
     try:
-        unit_price = float(art["price"])
+        original_price = float(art["price"])
     except (TypeError, ValueError):
         return jsonify({"error": "Prix article invalide en catalogue."}), 500
+
+    reduction = get_reduction()
+    unit_price = apply_reduction(original_price, reduction)
 
     cost = it.get("cost")
     cart = list(sess.get("cart") or [])
@@ -488,7 +503,9 @@ def api_add_item():
             "image": it.get("image", ""),
             "options": options,
             "cost": cost,
+            "originalPrice": original_price,
             "price": unit_price,
+            "reduction": reduction,
             "quantity": 1,
             "kfc": kfc_item,
         }
@@ -519,7 +536,9 @@ def api_basket():
             "image": e.get("image", ""),
             "options": e.get("options", []),
             "quantity": e.get("quantity", 1),
+            "originalPrice": e.get("originalPrice"),
             "price": e.get("price"),
+            "reduction": e.get("reduction"),
         }
         for e in cart
     ]
@@ -530,6 +549,7 @@ def api_basket():
             "limit": POINTS_LIMIT,
             "total": session_store.cart_total_eur(cart),
             "currency": get_currency(),
+            "reduction": get_reduction(),
         }
     )
 

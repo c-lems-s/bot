@@ -196,6 +196,36 @@ body {
 }
 .product-info { padding: 10px 12px 12px; }
 .product-name { font-weight: 700; font-size: 14px; line-height: 1.2; }
+.product-price-row {
+  margin-top: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.price-old {
+  position: relative;
+  display: inline-block;
+  color: #9a9a9a;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.price-old::after {
+  content: "";
+  position: absolute;
+  left: -2%;
+  right: -2%;
+  top: 50%;
+  border-top: 2px solid var(--kfc-red, #e4002b);
+  transform: rotate(-18deg);
+  pointer-events: none;
+}
+.price-new {
+  font-weight: 800;
+  color: var(--kfc-red);
+  font-size: 14px;
+}
 .product-price {
   margin-top: 8px;
   font-weight: 800;
@@ -207,6 +237,14 @@ body {
   font-weight: 600;
   font-size: 12px;
 }
+.c-price-wrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+.c-price-wrap .price-old { font-size: 11px; }
+.c-price-wrap .price-new { font-size: 13px; }
 .product-card.unavailable {
   cursor: default;
   opacity: 0.55;

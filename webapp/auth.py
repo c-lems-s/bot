@@ -75,21 +75,10 @@ def validate_webapp_init_data(init_data: str, bot_token: str) -> Dict[str, Any]:
     return user
 
 
-def _initial_balance() -> float:
-    """Solde de depart pour un nouvel utilisateur (lu une fois depuis table config)."""
-    try:
-        from kfc.config import get_balance
-
-        return float(get_balance())
-    except Exception:
-        return 0.0
-
-
 def resolve_request_user() -> Dict[str, Any]:
     """Resolut l'utilisateur courant. Raises PermissionError / ValueError."""
     init_data = (request.headers.get("X-Telegram-Init-Data") or "").strip()
     bot_token = _bot_token()
-    seed = _initial_balance()
 
     if init_data and bot_token:
         tg_user = validate_webapp_init_data(init_data, bot_token)
@@ -99,7 +88,7 @@ def resolve_request_user() -> Dict[str, Any]:
             first_name=tg_user.get("first_name"),
             last_name=tg_user.get("last_name"),
             language_code=tg_user.get("language_code"),
-            initial_balance=seed,
+            initial_balance=0.0,
         )
 
     if _dev_auth_enabled():
@@ -114,7 +103,7 @@ def resolve_request_user() -> Dict[str, Any]:
             first_name="Dev",
             last_name="User",
             language_code="fr",
-            initial_balance=seed,
+            initial_balance=0.0,
         )
 
     raise PermissionError("Authentification Telegram requise")
