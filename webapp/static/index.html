@@ -227,6 +227,27 @@
       <h2 class="screen-title">User info</h2>
       <div id="admin-user-box" class="info-card"></div>
     </section>
+
+    <!-- Gestion (admin) — hub -->
+    <section class="screen" id="screen-gestion">
+      <h2 class="screen-title">Gestion</h2>
+      <p class="info-note admin-only-hint">Tables et variables du shop.</p>
+      <div id="gestion-resources" class="gestion-resources"></div>
+      <div id="gestion-hub-empty" class="empty-hint" hidden>Chargement…</div>
+    </section>
+
+    <!-- Gestion (admin) — ressource -->
+    <section class="screen" id="screen-gestion-resource">
+      <button class="back-btn" id="gestion-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Gestion</span>
+      </button>
+      <h2 class="screen-title" id="gestion-resource-title">—</h2>
+      <p class="info-note" id="gestion-resource-desc"></p>
+      <div id="gestion-toolbar" class="gestion-toolbar" hidden></div>
+      <div id="gestion-body"></div>
+      <div id="gestion-empty" class="empty-hint" hidden></div>
+    </section>
   </main>
 
   <!-- ===================== MODALE MOYENS DE PAIEMENT ===================== -->
@@ -319,6 +340,12 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
       </span>
       <span>Commande</span>
+    </button>
+    <button class="nav-item nav-admin-only" data-nav="gestion" id="nav-gestion" hidden>
+      <span class="nav-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </span>
+      <span>Gestion</span>
     </button>
   </nav>
 

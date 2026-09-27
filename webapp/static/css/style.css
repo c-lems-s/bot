@@ -731,3 +731,83 @@ body.autoshop-locked #toast {
 .nav-item.nav-admin-only[hidden] {
   display: none !important;
 }
+
+body.is-admin .nav-item {
+  font-size: 10px;
+}
+body.is-admin .nav-item .nav-ic svg {
+  width: 20px;
+  height: 20px;
+}
+
+.gestion-resources {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gestion-res-label {
+  font-weight: 700;
+  font-size: 15px;
+}
+.gestion-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+.gestion-toolbar .field-input,
+.gestion-toolbar .secondary-btn {
+  margin: 0;
+}
+.gestion-toolbar-btn {
+  margin-top: 0;
+}
+.gestion-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gestion-form .primary-btn,
+.gestion-form .secondary-btn,
+.gestion-form .danger-btn {
+  margin-top: 12px;
+}
+.gestion-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 4px;
+  font-weight: 600;
+}
+.gestion-check-row input {
+  width: 18px;
+  height: 18px;
+}
+.gestion-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.gestion-row-main {
+  min-width: 0;
+  flex: 1;
+}
+.gestion-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.gestion-mini-danger,
+.gestion-mini-ok {
+  border: none;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  color: #fff;
+}
+.gestion-mini-danger { background: #c62828; }
+.gestion-mini-ok { background: #2e7d32; }
+.gestion-demande { align-items: flex-start; }

@@ -1187,6 +1187,11 @@ def api_ma_commande():
     return jsonify({"order": order, "hasMaCommande": order is not None})
 
 
+from webapp import admin_gestion as _admin_gestion  # noqa: E402
+
+_admin_gestion.register(app)
+
+
 def _warm_cache():
     try:
         stores.GetAllStores()

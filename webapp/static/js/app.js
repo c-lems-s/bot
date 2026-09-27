@@ -6,14 +6,17 @@ if (tg) {
   tg.expand();
 }
 
-const api = async (path, body) => {
+const api = async (path, body, method) => {
   const opt = {
     headers: {
       "Content-Type": "application/json",
       "X-Telegram-Init-Data": (tg && tg.initData) ? tg.initData : "",
     },
   };
-  if (body !== undefined) {
+  if (method) {
+    opt.method = method;
+    if (body !== undefined) opt.body = JSON.stringify(body);
+  } else if (body !== undefined) {
     opt.method = "POST";
     opt.body = JSON.stringify(body);
   }
@@ -50,6 +53,8 @@ const state = {
   showAdmin: false,
   hasMaCommande: false,
   adminOrderId: null,
+  gestionResource: null,
+  gestionMeta: null,
 };
 
 const POINTS_LIMIT_MSG =
@@ -682,6 +687,10 @@ document.querySelectorAll(".nav-item").forEach((n) => {
       // Affichage seul : le backend renvoie 403 si non-admin.
       renderAdminOrders();
       showScreen("commande");
+    } else if (nav === "gestion") {
+      state.gestionResource = null;
+      renderGestionHub();
+      showScreen("gestion");
     }
   };
 });
@@ -690,6 +699,8 @@ function setAdminNav(showAdmin) {
   state.showAdmin = !!showAdmin;
   const btn = $("nav-commande");
   if (btn) btn.hidden = !state.showAdmin;
+  const btnG = $("nav-gestion");
+  if (btnG) btnG.hidden = !state.showAdmin;
   document.body.classList.toggle("is-admin", state.showAdmin);
 }
 
@@ -1315,7 +1326,552 @@ function renderWallet() {
   }
   const cancelFin = $("admin-cancel-finalize");
   if (cancelFin) cancelFin.onclick = () => adminCancelOrder();
+
+  const gestionBack = $("gestion-back");
+  if (gestionBack) {
+    gestionBack.onclick = () => {
+      state.gestionResource = null;
+      renderGestionHub();
+      showScreen("gestion");
+      setNav("gestion");
+    };
+  }
 })();
+
+/* ---------- Gestion (admin) ---------- */
+function renderGestionHub() {
+  const box = $("gestion-resources");
+  const empty = $("gestion-hub-empty");
+  if (!box) return;
+  box.innerHTML = "";
+  if (empty) {
+    empty.hidden = false;
+    empty.textContent = "Chargement…";
+  }
+
+  const paint = (resources) => {
+    box.innerHTML = "";
+    if (!resources.length) {
+      if (empty) {
+        empty.textContent = "Aucune ressource.";
+        empty.hidden = false;
+      }
+      return;
+    }
+    if (empty) empty.hidden = true;
+    resources.forEach((r) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "queue-item queue-item-btn gestion-resource-btn";
+      btn.innerHTML = `
+        <div class="gestion-res-label">${escapeHtml(r.label)}</div>
+        <div class="c-opts">${escapeHtml(r.description || "")}</div>`;
+      btn.onclick = () => openGestionResource(r);
+      box.appendChild(btn);
+    });
+  };
+
+  if (state.gestionMeta && state.gestionMeta.length) {
+    paint(state.gestionMeta);
+    return;
+  }
+
+  api("/api/admin/gestion/meta")
+    .then((data) => {
+      state.gestionMeta = data.resources || [];
+      paint(state.gestionMeta);
+    })
+    .catch((e) => {
+      if (empty) {
+        empty.textContent = e.message || "Erreur";
+        empty.hidden = false;
+      }
+    });
+}
+
+function openGestionResource(res) {
+  state.gestionResource = res.id;
+  const title = $("gestion-resource-title");
+  const desc = $("gestion-resource-desc");
+  if (title) title.textContent = res.label || res.id;
+  if (desc) desc.textContent = res.description || "";
+  const body = $("gestion-body");
+  const empty = $("gestion-empty");
+  const toolbar = $("gestion-toolbar");
+  if (body) body.innerHTML = "";
+  if (toolbar) {
+    toolbar.innerHTML = "";
+    toolbar.hidden = true;
+  }
+  if (empty) {
+    empty.hidden = false;
+    empty.textContent = "Chargement…";
+  }
+  showScreen("gestion-resource");
+  setNav("gestion");
+
+  const loaders = {
+    config: loadGestionConfig,
+    articles: loadGestionArticles,
+    blacklist: loadGestionBlacklist,
+    moyens: loadGestionMoyens,
+    users: loadGestionUsers,
+    demandes: loadGestionDemandes,
+  };
+  const fn = loaders[res.id];
+  if (!fn) {
+    if (empty) empty.textContent = "Ressource inconnue.";
+    return;
+  }
+  fn().catch((e) => {
+    if (empty) {
+      empty.textContent = e.message || "Erreur";
+      empty.hidden = false;
+    }
+  });
+}
+
+function _gestionReady() {
+  const empty = $("gestion-empty");
+  if (empty) empty.hidden = true;
+  return $("gestion-body");
+}
+
+async function loadGestionConfig() {
+  const data = await api("/api/admin/gestion/config");
+  const cfg = data.config || {};
+  const body = _gestionReady();
+  if (!body) return;
+  body.innerHTML = `
+    <div class="gestion-form">
+      <label class="field-label" for="g-cfg-reduction">Reduction (%)</label>
+      <input class="field-input" id="g-cfg-reduction" type="number" min="0" max="100" step="0.1" value="${escapeHtml(String(cfg.reduction ?? ""))}" />
+      <label class="field-label" for="g-cfg-currency">Devise</label>
+      <input class="field-input" id="g-cfg-currency" type="text" maxlength="8" value="${escapeHtml(cfg.currency || "EUR")}" />
+      <label class="field-label" for="g-cfg-version">Version affichee</label>
+      <input class="field-input" id="g-cfg-version" type="text" maxlength="32" value="${escapeHtml(cfg.version || "")}" />
+      <label class="field-label" for="g-cfg-admin">Admin Telegram ID</label>
+      <input class="field-input" id="g-cfg-admin" type="text" inputmode="numeric" value="${escapeHtml(cfg.admin != null ? String(cfg.admin) : "")}" />
+      <label class="field-label gestion-check-row">
+        <input type="checkbox" id="g-cfg-actif" ${cfg.actif ? "checked" : ""} />
+        Shop actif
+      </label>
+      <label class="field-label" for="g-cfg-ph">Prochaine heure (si inactif)</label>
+      <input class="field-input" id="g-cfg-ph" type="text" value="${escapeHtml(cfg.prochaine_heure || "")}" />
+      <button class="primary-btn" id="g-cfg-save" type="button">Enregistrer</button>
+    </div>`;
+  const save = $("g-cfg-save");
+  if (save) {
+    save.onclick = async () => {
+      save.disabled = true;
+      try {
+        const actif = !!($("g-cfg-actif") || {}).checked;
+        const payload = {
+          reduction: Number(($("g-cfg-reduction") || {}).value),
+          currency: ($("g-cfg-currency") || {}).value || "EUR",
+          version: ($("g-cfg-version") || {}).value || "1",
+          admin: ($("g-cfg-admin") || {}).value,
+          actif,
+          prochaineHeure: actif ? null : (($("g-cfg-ph") || {}).value || null),
+        };
+        await api("/api/admin/gestion/config", payload, "PATCH");
+        toast("Variables enregistrees");
+        await loadGestionConfig();
+      } catch (e) {
+        toast(e.message || "Erreur");
+      } finally {
+        save.disabled = false;
+      }
+    };
+  }
+}
+
+async function loadGestionArticles() {
+  const toolbar = $("gestion-toolbar");
+  if (toolbar) {
+    toolbar.hidden = false;
+    toolbar.innerHTML = `
+      <input class="field-input gestion-search" id="g-art-q" type="search" placeholder="Rechercher…" autocomplete="off" />
+      <button class="secondary-btn gestion-toolbar-btn" id="g-art-new" type="button">+ Article</button>`;
+  }
+  const q = (($("g-art-q") || {}).value || "").trim();
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+  const data = await api(`/api/admin/gestion/articles${qs}`);
+  const articles = data.articles || [];
+  const body = _gestionReady();
+  if (!body) return;
+
+  const paintForm = (art) => {
+    const isNew = !art || !art.id;
+    body.innerHTML = `
+      <div class="gestion-form">
+        <label class="field-label" for="g-art-kfc">KFC item id</label>
+        <input class="field-input" id="g-art-kfc" type="text" value="${escapeHtml((art && art.kfcItemId) || "")}" ${isNew ? "" : ""} />
+        <label class="field-label" for="g-art-name">Nom</label>
+        <input class="field-input" id="g-art-name" type="text" value="${escapeHtml((art && art.name) || "")}" />
+        <label class="field-label" for="g-art-label">Label</label>
+        <input class="field-input" id="g-art-label" type="text" value="${escapeHtml((art && art.label) || "")}" />
+        <label class="field-label" for="g-art-price">Prix</label>
+        <input class="field-input" id="g-art-price" type="number" min="0" step="0.01" value="${escapeHtml(art && art.price != null ? String(art.price) : "")}" />
+        <label class="field-label" for="g-art-cost">Points (cost)</label>
+        <input class="field-input" id="g-art-cost" type="number" min="0" step="1" value="${escapeHtml(art && art.cost != null ? String(art.cost) : "")}" />
+        <button class="primary-btn" id="g-art-save" type="button">${isNew ? "Creer" : "Enregistrer"}</button>
+        ${isNew ? "" : '<button class="danger-btn" id="g-art-del" type="button">Supprimer</button>'}
+        <button class="secondary-btn" id="g-art-cancel" type="button">Retour liste</button>
+      </div>`;
+    $("g-art-cancel").onclick = () => loadGestionArticles().catch((e) => toast(e.message));
+    $("g-art-save").onclick = async () => {
+      const btn = $("g-art-save");
+      btn.disabled = true;
+      const payload = {
+        kfcItemId: ($("g-art-kfc") || {}).value || "",
+        name: ($("g-art-name") || {}).value || "",
+        label: ($("g-art-label") || {}).value || "",
+        price: Number(($("g-art-price") || {}).value),
+        cost: ($("g-art-cost") || {}).value === "" ? null : Number(($("g-art-cost") || {}).value),
+      };
+      try {
+        if (isNew) await api("/api/admin/gestion/articles", payload);
+        else await api(`/api/admin/gestion/articles/${art.id}`, payload, "PATCH");
+        toast(isNew ? "Article cree" : "Article mis a jour");
+        await loadGestionArticles();
+      } catch (e) {
+        toast(e.message || "Erreur");
+        btn.disabled = false;
+      }
+    };
+    const del = $("g-art-del");
+    if (del) {
+      del.onclick = async () => {
+        if (!confirm("Supprimer cet article ?")) return;
+        try {
+          await api(`/api/admin/gestion/articles/${art.id}`, undefined, "DELETE");
+          toast("Article supprime");
+          await loadGestionArticles();
+        } catch (e) {
+          toast(e.message || "Erreur");
+        }
+      };
+    }
+  };
+
+  if (!articles.length) {
+    body.innerHTML = `<div class="empty-hint">Aucun article.</div>`;
+  } else {
+    const list = document.createElement("div");
+    list.className = "queue-list";
+    articles.forEach((a) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "queue-item queue-item-btn";
+      row.innerHTML = `
+        <div class="gestion-res-label">${escapeHtml(a.label || a.name || a.kfcItemId)}</div>
+        <div class="c-opts">${escapeHtml(a.kfcItemId || "")} · ${a.price != null ? Number(a.price).toFixed(2) : "—"} · ${a.cost != null ? a.cost + " pts" : "—"}</div>`;
+      row.onclick = () => paintForm(a);
+      list.appendChild(row);
+    });
+    body.innerHTML = "";
+    body.appendChild(list);
+  }
+
+  const search = $("g-art-q");
+  if (search) {
+    search.onkeydown = (e) => {
+      if (e.key === "Enter") loadGestionArticles().catch((err) => toast(err.message));
+    };
+  }
+  const neu = $("g-art-new");
+  if (neu) neu.onclick = () => paintForm(null);
+}
+
+async function loadGestionBlacklist() {
+  const toolbar = $("gestion-toolbar");
+  if (toolbar) {
+    toolbar.hidden = false;
+    toolbar.innerHTML = `
+      <input class="field-input" id="g-bl-id" type="text" placeholder="store id" autocomplete="off" />
+      <input class="field-input" id="g-bl-name" type="text" placeholder="nom" autocomplete="off" />
+      <input class="field-input" id="g-bl-city" type="text" placeholder="ville" autocomplete="off" />
+      <button class="secondary-btn gestion-toolbar-btn" id="g-bl-add" type="button">Ajouter</button>`;
+  }
+  const data = await api("/api/admin/gestion/blacklist");
+  const stores = data.stores || [];
+  const body = _gestionReady();
+  if (!body) return;
+  if (!stores.length) {
+    body.innerHTML = `<div class="empty-hint">Blacklist vide.</div>`;
+  } else {
+    const list = document.createElement("div");
+    list.className = "queue-list";
+    stores.forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "queue-item gestion-row";
+      row.innerHTML = `
+        <div class="gestion-row-main">
+          <div class="gestion-res-label">${escapeHtml(s.name || s.storeId)}</div>
+          <div class="c-opts">${escapeHtml(s.city || "")} · ${escapeHtml(s.storeId)}${s.reason ? " · " + escapeHtml(s.reason) : ""}</div>
+        </div>
+        <button class="gestion-mini-danger" type="button" data-id="${escapeHtml(s.storeId)}">Retirer</button>`;
+      row.querySelector("button").onclick = async () => {
+        if (!confirm("Retirer de la blacklist ?")) return;
+        try {
+          await api(`/api/admin/gestion/blacklist/${encodeURIComponent(s.storeId)}`, undefined, "DELETE");
+          toast("Retire");
+          await loadGestionBlacklist();
+        } catch (e) {
+          toast(e.message || "Erreur");
+        }
+      };
+      list.appendChild(row);
+    });
+    body.innerHTML = "";
+    body.appendChild(list);
+  }
+  const add = $("g-bl-add");
+  if (add) {
+    add.onclick = async () => {
+      const storeId = (($("g-bl-id") || {}).value || "").trim();
+      if (!storeId) {
+        toast("store id requis");
+        return;
+      }
+      add.disabled = true;
+      try {
+        await api("/api/admin/gestion/blacklist", {
+          storeId,
+          name: (($("g-bl-name") || {}).value || "").trim(),
+          city: (($("g-bl-city") || {}).value || "").trim(),
+          reason: "manual",
+        });
+        toast("Ajoute");
+        await loadGestionBlacklist();
+      } catch (e) {
+        toast(e.message || "Erreur");
+        add.disabled = false;
+      }
+    };
+  }
+}
+
+async function loadGestionMoyens() {
+  const toolbar = $("gestion-toolbar");
+  if (toolbar) {
+    toolbar.hidden = false;
+    toolbar.innerHTML = `
+      <input class="field-input" id="g-moy-nom" type="text" placeholder="Nom" autocomplete="off" />
+      <input class="field-input" id="g-moy-lien" type="text" placeholder="Lien" autocomplete="off" />
+      <button class="secondary-btn gestion-toolbar-btn" id="g-moy-add" type="button">Ajouter</button>`;
+  }
+  const data = await api("/api/admin/gestion/moyens");
+  const moyens = data.moyens || [];
+  const body = _gestionReady();
+  if (!body) return;
+
+  const editForm = (m) => {
+    body.innerHTML = `
+      <div class="gestion-form">
+        <label class="field-label" for="g-moy-e-nom">Nom</label>
+        <input class="field-input" id="g-moy-e-nom" type="text" value="${escapeHtml(m.nom || "")}" />
+        <label class="field-label" for="g-moy-e-lien">Lien</label>
+        <input class="field-input" id="g-moy-e-lien" type="text" value="${escapeHtml(m.lien || "")}" />
+        <button class="primary-btn" id="g-moy-save" type="button">Enregistrer</button>
+        <button class="danger-btn" id="g-moy-del" type="button">Supprimer</button>
+        <button class="secondary-btn" id="g-moy-cancel" type="button">Retour liste</button>
+      </div>`;
+    $("g-moy-cancel").onclick = () => loadGestionMoyens().catch((e) => toast(e.message));
+    $("g-moy-save").onclick = async () => {
+      try {
+        await api(`/api/admin/gestion/moyens/${m.id}`, {
+          nom: ($("g-moy-e-nom") || {}).value || "",
+          lien: ($("g-moy-e-lien") || {}).value || "",
+        }, "PATCH");
+        toast("Moyen mis a jour");
+        await loadGestionMoyens();
+      } catch (e) {
+        toast(e.message || "Erreur");
+      }
+    };
+    $("g-moy-del").onclick = async () => {
+      if (!confirm("Supprimer ce moyen ?")) return;
+      try {
+        await api(`/api/admin/gestion/moyens/${m.id}`, undefined, "DELETE");
+        toast("Supprime");
+        await loadGestionMoyens();
+      } catch (e) {
+        toast(e.message || "Erreur");
+      }
+    };
+  };
+
+  if (!moyens.length) {
+    body.innerHTML = `<div class="empty-hint">Aucun moyen.</div>`;
+  } else {
+    const list = document.createElement("div");
+    list.className = "queue-list";
+    moyens.forEach((m) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "queue-item queue-item-btn";
+      row.innerHTML = `
+        <div class="gestion-res-label">${escapeHtml(m.nom)}</div>
+        <div class="c-opts">${escapeHtml(m.lien || "—")}</div>`;
+      row.onclick = () => editForm(m);
+      list.appendChild(row);
+    });
+    body.innerHTML = "";
+    body.appendChild(list);
+  }
+
+  const add = $("g-moy-add");
+  if (add) {
+    add.onclick = async () => {
+      const nom = (($("g-moy-nom") || {}).value || "").trim();
+      if (!nom) {
+        toast("nom requis");
+        return;
+      }
+      add.disabled = true;
+      try {
+        await api("/api/admin/gestion/moyens", {
+          nom,
+          lien: (($("g-moy-lien") || {}).value || "").trim(),
+        });
+        toast("Moyen ajoute");
+        await loadGestionMoyens();
+      } catch (e) {
+        toast(e.message || "Erreur");
+        add.disabled = false;
+      }
+    };
+  }
+}
+
+async function loadGestionUsers() {
+  const toolbar = $("gestion-toolbar");
+  if (toolbar) {
+    toolbar.hidden = false;
+    toolbar.innerHTML = `
+      <input class="field-input gestion-search" id="g-user-q" type="search" placeholder="Telegram / username…" autocomplete="off" />
+      <button class="secondary-btn gestion-toolbar-btn" id="g-user-go" type="button">Chercher</button>`;
+  }
+  const q = (($("g-user-q") || {}).value || "").trim();
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+  const data = await api(`/api/admin/gestion/users${qs}`);
+  const users = data.users || [];
+  const body = _gestionReady();
+  if (!body) return;
+
+  const editUser = (u) => {
+    body.innerHTML = `
+      <div class="gestion-form">
+        <div class="info-line"><span>ID</span><span>${escapeHtml(String(u.id))}</span></div>
+        <div class="info-line"><span>Telegram</span><span>${escapeHtml(String(u.telegramId))}</span></div>
+        <div class="info-line"><span>Username</span><span>${escapeHtml(u.username ? "@" + u.username : "—")}</span></div>
+        <label class="field-label" for="g-user-bal">Solde</label>
+        <input class="field-input" id="g-user-bal" type="number" min="0" step="0.01" value="${escapeHtml(String(u.balance ?? 0))}" />
+        <label class="field-label gestion-check-row">
+          <input type="checkbox" id="g-user-active" ${u.isActive ? "checked" : ""} />
+          Compte actif
+        </label>
+        <button class="primary-btn" id="g-user-save" type="button">Enregistrer</button>
+        <button class="secondary-btn" id="g-user-cancel" type="button">Retour liste</button>
+      </div>`;
+    $("g-user-cancel").onclick = () => loadGestionUsers().catch((e) => toast(e.message));
+    $("g-user-save").onclick = async () => {
+      try {
+        await api(`/api/admin/gestion/users/${u.id}`, {
+          balance: Number(($("g-user-bal") || {}).value),
+          isActive: !!($("g-user-active") || {}).checked,
+        }, "PATCH");
+        toast("Utilisateur mis a jour");
+        await loadGestionUsers();
+      } catch (e) {
+        toast(e.message || "Erreur");
+      }
+    };
+  };
+
+  if (!users.length) {
+    body.innerHTML = `<div class="empty-hint">Aucun utilisateur.</div>`;
+  } else {
+    const list = document.createElement("div");
+    list.className = "queue-list";
+    users.forEach((u) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "queue-item queue-item-btn";
+      const name = u.firstName || u.username || String(u.telegramId);
+      row.innerHTML = `
+        <div class="gestion-res-label">${escapeHtml(name)}${u.isActive ? "" : " · inactif"}</div>
+        <div class="c-opts">#${escapeHtml(String(u.id))} · ${escapeHtml(String(u.telegramId))} · ${Number(u.balance || 0).toFixed(2)}</div>`;
+      row.onclick = () => editUser(u);
+      list.appendChild(row);
+    });
+    body.innerHTML = "";
+    body.appendChild(list);
+  }
+
+  const go = $("g-user-go");
+  if (go) go.onclick = () => loadGestionUsers().catch((e) => toast(e.message));
+  const search = $("g-user-q");
+  if (search) {
+    search.onkeydown = (e) => {
+      if (e.key === "Enter") loadGestionUsers().catch((err) => toast(err.message));
+    };
+  }
+}
+
+async function loadGestionDemandes() {
+  const toolbar = $("gestion-toolbar");
+  if (toolbar) {
+    toolbar.hidden = true;
+    toolbar.innerHTML = "";
+  }
+  const data = await api("/api/admin/gestion/demandes");
+  const demandes = data.demandes || [];
+  const body = _gestionReady();
+  if (!body) return;
+  if (!demandes.length) {
+    body.innerHTML = `<div class="empty-hint">Aucune demande ouverte.</div>`;
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "queue-list";
+  demandes.forEach((d) => {
+    const row = document.createElement("div");
+    row.className = "queue-item gestion-row gestion-demande";
+    const who = d.username ? "@" + d.username : d.firstName || d.telegramId || d.userId;
+    row.innerHTML = `
+      <div class="gestion-row-main">
+        <div class="gestion-res-label">#${escapeHtml(String(d.id))} · ${escapeHtml(d.status)}</div>
+        <div class="c-opts">${escapeHtml(String(who))} · ${d.montant != null ? Number(d.montant).toFixed(2) : "—"} · ${escapeHtml(d.moyenNom || "")} · ${escapeHtml(String(d.preuveCount || 0))} preuve(s)</div>
+      </div>
+      <div class="gestion-row-actions">
+        ${d.status === "PENDING" ? `
+          <button class="gestion-mini-ok" type="button" data-act="accept">OK</button>
+          <button class="gestion-mini-danger" type="button" data-act="reject">Non</button>
+        ` : `<span class="c-opts">DRAFT</span>`}
+      </div>`;
+    row.querySelectorAll("button[data-act]").forEach((btn) => {
+      btn.onclick = async () => {
+        const act = btn.getAttribute("data-act");
+        if (!confirm(act === "accept" ? "Accepter et crediter ?" : "Refuser cette demande ?")) return;
+        btn.disabled = true;
+        try {
+          await api(`/api/admin/gestion/demandes/${d.id}/${act}`, {});
+          toast(act === "accept" ? "Acceptee" : "Refusee");
+          await loadGestionDemandes();
+        } catch (e) {
+          toast(e.message || "Erreur");
+          btn.disabled = false;
+        }
+      };
+    });
+    list.appendChild(row);
+  });
+  body.innerHTML = "";
+  body.appendChild(list);
+}
 
 function renderHistory() {
   const list = $("history-list");
