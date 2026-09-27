@@ -1,4 +1,4 @@
-"""Telegram Bot API — envoi messages / photos / callbacks paiement."""
+"""Telegram Bot API — envoi messages / photos (bot /actif, notifs user)."""
 
 from __future__ import annotations
 

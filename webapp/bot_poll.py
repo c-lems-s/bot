@@ -1,4 +1,4 @@
-"""Polling Telegram (callbacks Accepter/Refuser paiement).
+"""Polling Telegram (commandes bot /actif).
 
 Lance en thread daemon depuis webapp.server, ou :
     python -m webapp.bot_poll
@@ -13,7 +13,6 @@ import time
 
 from webapp import telegram as tg
 from webapp import bot_actif
-from webapp.paiement_review import process_update as process_paiement_update
 
 log = logging.getLogger(__name__)
 
@@ -22,14 +21,12 @@ _offset: int | None = None
 
 
 def process_update(update: dict) -> None:
-    if bot_actif.process_update(update):
-        return
-    process_paiement_update(update)
+    bot_actif.process_update(update)
 
 
 def _poll_loop() -> None:
     global _offset
-    log.info("Telegram bot poll demarre (/actif + paiements)")
+    log.info("Telegram bot poll demarre (/actif)")
     while True:
         try:
             updates = tg.get_updates(offset=_offset, timeout=25)

@@ -228,6 +228,38 @@
       <div id="admin-user-box" class="info-card"></div>
     </section>
 
+    <!-- Paiement (admin) — file -->
+    <section class="screen" id="screen-paiement">
+      <h2 class="screen-title">Paiement</h2>
+      <p class="info-note admin-only-hint">File d'attente — recharges en attente.</p>
+      <div id="admin-paiements-list" class="queue-list"></div>
+      <div id="admin-paiements-empty" class="empty-hint" hidden>File vide.</div>
+    </section>
+
+    <!-- Paiement (admin) — detail -->
+    <section class="screen" id="screen-paiement-detail">
+      <button class="back-btn" id="admin-paiement-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>File d'attente</span>
+      </button>
+      <h2 class="screen-title">Detail paiement</h2>
+      <div id="admin-paiement-detail" class="info-card"></div>
+      <div id="admin-paiement-preuves" class="admin-preuves"></div>
+      <button class="secondary-btn" id="admin-paiement-user-btn" type="button">User info</button>
+      <button class="primary-btn" id="admin-paiement-accept" type="button">Accepter</button>
+      <button class="danger-btn" id="admin-paiement-reject" type="button">Refuser</button>
+    </section>
+
+    <!-- Paiement (admin) — user info -->
+    <section class="screen" id="screen-paiement-user">
+      <button class="back-btn" id="admin-paiement-user-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Retour detail</span>
+      </button>
+      <h2 class="screen-title">User info</h2>
+      <div id="admin-paiement-user-box" class="info-card"></div>
+    </section>
+
     <!-- Gestion (admin) — hub -->
     <section class="screen" id="screen-gestion">
       <h2 class="screen-title">Gestion</h2>
@@ -340,6 +372,12 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
       </span>
       <span>Commande</span>
+    </button>
+    <button class="nav-item nav-admin-only" data-nav="paiement" id="nav-paiement" hidden>
+      <span class="nav-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
+      </span>
+      <span>Paiement</span>
     </button>
     <button class="nav-item nav-admin-only" data-nav="gestion" id="nav-gestion" hidden>
       <span class="nav-ic">

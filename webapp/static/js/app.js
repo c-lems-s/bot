@@ -53,8 +53,10 @@ const state = {
   showAdmin: false,
   hasMaCommande: false,
   adminOrderId: null,
+  adminPaiementId: null,
   gestionResource: null,
   gestionMeta: null,
+  _preuveObjectUrls: [],
 };
 
 const POINTS_LIMIT_MSG =
@@ -687,6 +689,10 @@ document.querySelectorAll(".nav-item").forEach((n) => {
       // Affichage seul : le backend renvoie 403 si non-admin.
       renderAdminOrders();
       showScreen("commande");
+    } else if (nav === "paiement") {
+      state.adminPaiementId = null;
+      renderAdminPaiements();
+      showScreen("paiement");
     } else if (nav === "gestion") {
       state.gestionResource = null;
       renderGestionHub();
@@ -697,10 +703,10 @@ document.querySelectorAll(".nav-item").forEach((n) => {
 
 function setAdminNav(showAdmin) {
   state.showAdmin = !!showAdmin;
-  const btn = $("nav-commande");
-  if (btn) btn.hidden = !state.showAdmin;
-  const btnG = $("nav-gestion");
-  if (btnG) btnG.hidden = !state.showAdmin;
+  ["nav-commande", "nav-paiement", "nav-gestion"].forEach((id) => {
+    const btn = $(id);
+    if (btn) btn.hidden = !state.showAdmin;
+  });
   document.body.classList.toggle("is-admin", state.showAdmin);
 }
 
@@ -820,6 +826,195 @@ async function adminCompleteOrder() {
     renderAdminOrders();
     showScreen("commande");
     setNav("commande");
+  } catch (e) {
+    toast(e.message || "Echec");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function revokePreuveObjectUrls() {
+  (state._preuveObjectUrls || []).forEach((u) => {
+    try { URL.revokeObjectURL(u); } catch (e) {}
+  });
+  state._preuveObjectUrls = [];
+}
+
+async function fetchAuthBlob(path) {
+  const opt = {
+    headers: {
+      "X-Telegram-Init-Data": (tg && tg.initData) ? tg.initData : "",
+    },
+  };
+  const r = await fetch(path, opt);
+  if (!r.ok) {
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    throw new Error(data.error || `Erreur ${r.status}`);
+  }
+  return r.blob();
+}
+
+function renderAdminPaiements() {
+  const list = $("admin-paiements-list");
+  const empty = $("admin-paiements-empty");
+  if (!list || !empty) return;
+  list.innerHTML = "";
+  empty.hidden = false;
+  empty.textContent = "Chargement…";
+
+  api("/api/admin/paiements")
+    .then((data) => {
+      list.innerHTML = "";
+      const rows = data.paiements || [];
+      if (!rows.length) {
+        empty.textContent = "File vide.";
+        empty.hidden = false;
+        return;
+      }
+      empty.hidden = true;
+      rows.forEach((p) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "queue-item queue-item-btn";
+        row.textContent = p.label || `${p.clientName || "—"} - ${p.id || "—"}`;
+        row.onclick = () => openAdminPaiementDetail(p.id);
+        list.appendChild(row);
+      });
+    })
+    .catch((e) => {
+      empty.textContent = e.message || "Impossible de charger la file.";
+      empty.hidden = false;
+    });
+}
+
+function openAdminPaiementDetail(demandeId) {
+  state.adminPaiementId = demandeId;
+  revokePreuveObjectUrls();
+  const box = $("admin-paiement-detail");
+  const preuvesBox = $("admin-paiement-preuves");
+  if (box) box.innerHTML = "<p class='info-note'>Chargement…</p>";
+  if (preuvesBox) preuvesBox.innerHTML = "";
+  showScreen("paiement-detail");
+
+  api(`/api/admin/paiements/${demandeId}`)
+    .then(async (data) => {
+      const p = data.paiement;
+      if (!p) throw new Error("Demande introuvable");
+      const cur = p.currency || "EUR";
+      box.innerHTML = `
+        <div class="info-line"><span>N°</span><span>${escapeHtml(String(p.id))}</span></div>
+        <div class="info-line"><span>Client</span><span>${escapeHtml(p.clientName || "—")}</span></div>
+        <div class="info-line"><span>Montant</span><span>${p.montant != null ? escapeHtml(Number(p.montant).toFixed(2) + " " + cur) : "—"}</span></div>
+        <div class="info-line"><span>Moyen</span><span>${escapeHtml(p.moyenNom || "—")}</span></div>
+        <p class="info-note">Lien : ${escapeHtml(p.lien || "—")}</p>
+        <p class="info-note">Finalise : ${escapeHtml(p.finalizedAt || "—")}</p>
+        <p class="info-note">Preuves : ${escapeHtml(String(p.preuveCount != null ? p.preuveCount : (p.preuves || []).length))}</p>`;
+
+      if (preuvesBox) {
+        preuvesBox.innerHTML = "";
+        const preuves = p.preuves || [];
+        if (!preuves.length) {
+          preuvesBox.innerHTML = `<p class="info-note">Aucune preuve.</p>`;
+        } else {
+          for (const pr of preuves) {
+            const wrap = document.createElement("div");
+            wrap.className = "admin-preuve-item";
+            wrap.innerHTML = `<div class="c-opts">${escapeHtml(pr.filename || "preuve")}</div>`;
+            try {
+              const blob = await fetchAuthBlob(pr.url);
+              const url = URL.createObjectURL(blob);
+              state._preuveObjectUrls.push(url);
+              const mime = (pr.mime || blob.type || "").toLowerCase();
+              if (mime.includes("pdf")) {
+                const a = document.createElement("a");
+                a.href = url;
+                a.target = "_blank";
+                a.rel = "noopener";
+                a.className = "secondary-btn";
+                a.textContent = "Ouvrir PDF";
+                wrap.appendChild(a);
+              } else {
+                const img = document.createElement("img");
+                img.className = "admin-preuve-img";
+                img.src = url;
+                img.alt = pr.filename || "preuve";
+                wrap.appendChild(img);
+              }
+            } catch (e) {
+              const err = document.createElement("p");
+              err.className = "info-note";
+              err.textContent = e.message || "Preuve indisponible";
+              wrap.appendChild(err);
+            }
+            preuvesBox.appendChild(wrap);
+          }
+        }
+      }
+    })
+    .catch((e) => {
+      toast(e.message || "Erreur");
+      showScreen("paiement");
+    });
+}
+
+function openAdminPaiementUserInfo() {
+  if (!state.adminPaiementId) return;
+  const box = $("admin-paiement-user-box");
+  if (box) box.innerHTML = "<p class='info-note'>Chargement…</p>";
+  showScreen("paiement-user");
+  api(`/api/admin/paiements/${state.adminPaiementId}/user`)
+    .then((data) => {
+      const u = data.user || {};
+      box.innerHTML = `
+        <div class="info-line"><span>ID</span><span>${escapeHtml(String(u.id ?? "—"))}</span></div>
+        <div class="info-line"><span>Telegram</span><span>${escapeHtml(String(u.telegramId ?? "—"))}</span></div>
+        <div class="info-line"><span>Username</span><span>${escapeHtml(u.username ? "@" + u.username : "—")}</span></div>
+        <div class="info-line"><span>Prenom</span><span>${escapeHtml(u.firstName || "—")}</span></div>
+        <div class="info-line"><span>Nom</span><span>${escapeHtml(u.lastName || "—")}</span></div>
+        <div class="info-line"><span>Solde</span><span>${escapeHtml(u.balance != null ? Number(u.balance).toFixed(2) + " EUR" : "—")}</span></div>
+        <div class="info-line"><span>Achats</span><span>${escapeHtml(String(u.purchaseCount ?? "—"))}</span></div>
+        <p class="info-note">Dernier achat : ${escapeHtml(u.lastPurchaseAt || "—")}</p>`;
+    })
+    .catch((e) => {
+      toast(e.message || "Erreur user info");
+      showScreen("paiement-detail");
+    });
+}
+
+async function adminAcceptPaiement() {
+  if (!state.adminPaiementId) return;
+  if (!confirm("Accepter et crediter le solde ?")) return;
+  const btn = $("admin-paiement-accept");
+  if (btn) btn.disabled = true;
+  try {
+    await api(`/api/admin/paiements/${state.adminPaiementId}/accept`, {});
+    toast("Paiement accepte");
+    state.adminPaiementId = null;
+    revokePreuveObjectUrls();
+    renderAdminPaiements();
+    showScreen("paiement");
+    setNav("paiement");
+  } catch (e) {
+    toast(e.message || "Echec");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function adminRejectPaiement() {
+  if (!state.adminPaiementId) return;
+  if (!confirm("Refuser cette demande ?")) return;
+  const btn = $("admin-paiement-reject");
+  if (btn) btn.disabled = true;
+  try {
+    await api(`/api/admin/paiements/${state.adminPaiementId}/reject`, {});
+    toast("Paiement refuse");
+    state.adminPaiementId = null;
+    revokePreuveObjectUrls();
+    renderAdminPaiements();
+    showScreen("paiement");
+    setNav("paiement");
   } catch (e) {
     toast(e.message || "Echec");
   } finally {
@@ -1327,6 +1522,27 @@ function renderWallet() {
   const cancelFin = $("admin-cancel-finalize");
   if (cancelFin) cancelFin.onclick = () => adminCancelOrder();
 
+  const payBack = $("admin-paiement-back");
+  if (payBack) {
+    payBack.onclick = () => {
+      state.adminPaiementId = null;
+      revokePreuveObjectUrls();
+      renderAdminPaiements();
+      showScreen("paiement");
+      setNav("paiement");
+    };
+  }
+  const payUserBtn = $("admin-paiement-user-btn");
+  if (payUserBtn) payUserBtn.onclick = () => openAdminPaiementUserInfo();
+  const payUserBack = $("admin-paiement-user-back");
+  if (payUserBack) {
+    payUserBack.onclick = () => showScreen("paiement-detail");
+  }
+  const payAccept = $("admin-paiement-accept");
+  if (payAccept) payAccept.onclick = () => adminAcceptPaiement();
+  const payReject = $("admin-paiement-reject");
+  if (payReject) payReject.onclick = () => adminRejectPaiement();
+
   const gestionBack = $("gestion-back");
   if (gestionBack) {
     gestionBack.onclick = () => {
@@ -1416,7 +1632,6 @@ function openGestionResource(res) {
     blacklist: loadGestionBlacklist,
     moyens: loadGestionMoyens,
     users: loadGestionUsers,
-    demandes: loadGestionDemandes,
   };
   const fn = loaders[res.id];
   if (!fn) {
@@ -1819,58 +2034,6 @@ async function loadGestionUsers() {
       if (e.key === "Enter") loadGestionUsers().catch((err) => toast(err.message));
     };
   }
-}
-
-async function loadGestionDemandes() {
-  const toolbar = $("gestion-toolbar");
-  if (toolbar) {
-    toolbar.hidden = true;
-    toolbar.innerHTML = "";
-  }
-  const data = await api("/api/admin/gestion/demandes");
-  const demandes = data.demandes || [];
-  const body = _gestionReady();
-  if (!body) return;
-  if (!demandes.length) {
-    body.innerHTML = `<div class="empty-hint">Aucune demande ouverte.</div>`;
-    return;
-  }
-  const list = document.createElement("div");
-  list.className = "queue-list";
-  demandes.forEach((d) => {
-    const row = document.createElement("div");
-    row.className = "queue-item gestion-row gestion-demande";
-    const who = d.username ? "@" + d.username : d.firstName || d.telegramId || d.userId;
-    row.innerHTML = `
-      <div class="gestion-row-main">
-        <div class="gestion-res-label">#${escapeHtml(String(d.id))} · ${escapeHtml(d.status)}</div>
-        <div class="c-opts">${escapeHtml(String(who))} · ${d.montant != null ? Number(d.montant).toFixed(2) : "—"} · ${escapeHtml(d.moyenNom || "")} · ${escapeHtml(String(d.preuveCount || 0))} preuve(s)</div>
-      </div>
-      <div class="gestion-row-actions">
-        ${d.status === "PENDING" ? `
-          <button class="gestion-mini-ok" type="button" data-act="accept">OK</button>
-          <button class="gestion-mini-danger" type="button" data-act="reject">Non</button>
-        ` : `<span class="c-opts">DRAFT</span>`}
-      </div>`;
-    row.querySelectorAll("button[data-act]").forEach((btn) => {
-      btn.onclick = async () => {
-        const act = btn.getAttribute("data-act");
-        if (!confirm(act === "accept" ? "Accepter et crediter ?" : "Refuser cette demande ?")) return;
-        btn.disabled = true;
-        try {
-          await api(`/api/admin/gestion/demandes/${d.id}/${act}`, {});
-          toast(act === "accept" ? "Acceptee" : "Refusee");
-          await loadGestionDemandes();
-        } catch (e) {
-          toast(e.message || "Erreur");
-          btn.disabled = false;
-        }
-      };
-    });
-    list.appendChild(row);
-  });
-  body.innerHTML = "";
-  body.appendChild(list);
 }
 
 function renderHistory() {

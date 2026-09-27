@@ -811,3 +811,31 @@ body.is-admin .nav-item .nav-ic svg {
 .gestion-mini-danger { background: #c62828; }
 .gestion-mini-ok { background: #2e7d32; }
 .gestion-demande { align-items: flex-start; }
+
+.admin-preuves {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 14px 0;
+}
+.admin-preuve-item {
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.admin-preuve-img {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  margin-top: 8px;
+  border-radius: 10px;
+  background: var(--bg-elev);
+}
+#admin-paiement-accept {
+  margin-top: 14px;
+}
+#admin-paiement-reject {
+  margin-top: 10px;
+}

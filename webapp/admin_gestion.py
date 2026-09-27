@@ -44,11 +44,6 @@ GESTION_RESOURCES = (
         "label": "Utilisateurs",
         "description": "Soldes et comptes Telegram",
     },
-    {
-        "id": "demandes",
-        "label": "Demandes recharge",
-        "description": "Top-up PENDING / DRAFT",
-    },
 )
 
 _CONFIG_PUBLIC_KEYS = (
@@ -254,49 +249,6 @@ def _list_users(limit: int = 100, q: str = "") -> list:
                     "isActive": bool(r.get("is_active", True)),
                     "lastSeenAt": r["last_seen_at"].isoformat()
                     if r.get("last_seen_at")
-                    else None,
-                }
-            )
-        return out
-
-
-def _list_demandes(limit: int = 100) -> list:
-    limit = max(1, min(int(limit or 100), 200))
-    with get_cursor() as cur:
-        cur.execute(
-            """
-            SELECT d.id, d.user_id, d.status, d.montant, d.moyen_nom, d.lien,
-                   d.finalized_at, d.created_at,
-                   u.telegram_id, u.username, u.first_name,
-                   (SELECT COUNT(*)::int FROM paiement_preuve p WHERE p.demande_id = d.id)
-                     AS preuve_count
-            FROM paiement_demande d
-            LEFT JOIN users u ON u.id = d.user_id
-            WHERE d.status IN ('DRAFT', 'PENDING')
-            ORDER BY d.created_at DESC
-            LIMIT %s
-            """,
-            (limit,),
-        )
-        out = []
-        for r in cur.fetchall() or []:
-            out.append(
-                {
-                    "id": int(r["id"]),
-                    "userId": int(r["user_id"]) if r.get("user_id") else None,
-                    "telegramId": int(r["telegram_id"]) if r.get("telegram_id") else None,
-                    "username": r.get("username"),
-                    "firstName": r.get("first_name"),
-                    "status": r.get("status"),
-                    "montant": float(r["montant"]) if r.get("montant") is not None else None,
-                    "moyenNom": r.get("moyen_nom") or "",
-                    "lien": r.get("lien") or "",
-                    "preuveCount": int(r["preuve_count"] or 0),
-                    "finalizedAt": r["finalized_at"].isoformat()
-                    if r.get("finalized_at")
-                    else None,
-                    "createdAt": r["created_at"].isoformat()
-                    if r.get("created_at")
                     else None,
                 }
             )
@@ -622,74 +574,3 @@ def register(app) -> None:
                 }
             }
         )
-
-    @app.route("/api/admin/gestion/demandes", methods=["GET"])
-    @require_telegram_user
-    def api_gestion_demandes():
-        denied = _require_admin()
-        if denied:
-            return denied
-        return jsonify({"demandes": _list_demandes()})
-
-    @app.route("/api/admin/gestion/demandes/<int:demande_id>/<action>", methods=["POST"])
-    @require_telegram_user
-    def api_gestion_demande_action(demande_id: int, action: str):
-        denied = _require_admin()
-        if denied:
-            return denied
-        action = (action or "").lower().strip()
-        if action not in ("accept", "reject"):
-            return jsonify({"error": "action invalide"}), 400
-
-        dem = paiements_repo.get_demande_by_id(demande_id)
-        if not dem:
-            return jsonify({"error": "demande introuvable"}), 404
-        if dem["status"] != "PENDING":
-            return jsonify({"error": f"statut {dem['status']} non traitable"}), 409
-
-        from kfc.config import get_currency
-        from webapp import telegram as tg
-
-        client = users_repo.get_by_id(int(dem["userId"])) if dem.get("userId") else None
-        cur = get_currency()
-
-        if action == "accept":
-            montant = float(dem.get("montant") or 0)
-            if montant <= 0:
-                return jsonify({"error": "montant invalide"}), 400
-            accepted = paiements_repo.accept_demande(demande_id)
-            if not accepted:
-                return jsonify({"error": "deja traitee"}), 409
-            new_bal = users_repo.credit(int(dem["userId"]), montant)
-            paiements_repo.add_user_paiement(
-                int(dem["userId"]),
-                solde=montant,
-                moyen_paiement_id=dem.get("moyenId"),
-                moyen=dem.get("moyenNom"),
-            )
-            if client and client.get("telegram_id"):
-                tg.send_message(
-                    int(client["telegram_id"]),
-                    (
-                        f"Paiement accepte.\n"
-                        f"Recharge de {montant:.2f} {cur} validee.\n"
-                        f"Nouveau solde : {new_bal:.2f} {cur}."
-                    ),
-                    parse_mode=None,
-                )
-            return jsonify({"ok": True, "status": "ACCEPTED", "balance": new_bal})
-
-        rejected = paiements_repo.reject_demande(demande_id)
-        if not rejected:
-            return jsonify({"error": "deja traitee"}), 409
-        if client and client.get("telegram_id"):
-            tg.send_message(
-                int(client["telegram_id"]),
-                (
-                    "Paiement refuse.\n"
-                    "Votre demande de recharge a ete refusee. "
-                    "Aucun solde n'a ete ajoute."
-                ),
-                parse_mode=None,
-            )
-        return jsonify({"ok": True, "status": "REJECTED"})

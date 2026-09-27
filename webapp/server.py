@@ -14,7 +14,7 @@ import sys
 import threading
 import uuid
 
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_file, send_from_directory
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -626,23 +626,13 @@ def api_wallet_topup_finalize(demande_id: int):
     if not updated or updated.get("status") != "PENDING":
         return jsonify({"error": "Finalisation impossible"}), 409
 
-    try:
-        from webapp.paiement_review import notify_admin_paiement
-
-        ok_notif = notify_admin_paiement(demande_id)
-        if not ok_notif:
-            app.logger.warning(
-                "Notif admin echouee pour demande %s (admin/token ?)", demande_id
-            )
-    except Exception:
-        app.logger.exception("Erreur notif admin demande %s", demande_id)
-
+    # File admin dans la mini-app (rubrique Paiement) — plus de message Telegram.
     return jsonify({"demande": updated})
 
 
 @app.route("/telegram/webhook", methods=["POST"])
 def telegram_webhook():
-    """Webhook Bot API — secret obligatoire (anti-forgery admin callbacks)."""
+    """Webhook Bot API — secret obligatoire (anti-forgery bot updates)."""
     secret = (os.environ.get("TELEGRAM_WEBHOOK_SECRET") or "").strip()
     if not secret:
         return jsonify({"error": "webhook disabled (TELEGRAM_WEBHOOK_SECRET manquant)"}), 503
@@ -1033,6 +1023,139 @@ def api_history():
     return jsonify(
         {"orders": order_history.list_recent(limit=limit, user_id=user["id"])}
     )
+
+
+@app.route("/api/admin/paiements")
+@require_telegram_user
+def api_admin_paiements():
+    """File d'attente recharges PENDING — admin uniquement."""
+    user = g.user
+    if not is_admin(user.get("telegram_id")):
+        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    return jsonify({"paiements": paiements_repo.list_pending_for_admin(limit=100)})
+
+
+@app.route("/api/admin/paiements/<int:demande_id>")
+@require_telegram_user
+def api_admin_paiement_detail(demande_id: int):
+    user = g.user
+    if not is_admin(user.get("telegram_id")):
+        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    dem = paiements_repo.get_demande_by_id(demande_id)
+    if not dem or dem.get("status") != "PENDING":
+        return jsonify({"error": "Demande introuvable"}), 404
+    preuves = paiements_repo.list_preuves(demande_id)
+    for p in preuves:
+        p["url"] = f"/api/admin/paiements/{demande_id}/preuves/{p['id']}"
+    u = users_repo.get_by_id(int(dem["userId"])) if dem.get("userId") else None
+    client_name = "Client"
+    if u:
+        parts = [
+            (u.get("first_name") or "").strip(),
+            (u.get("last_name") or "").strip(),
+        ]
+        client_name = " ".join(p for p in parts if p) or (
+            f"@{u['username']}" if u.get("username") else f"User #{u.get('id')}"
+        )
+    return jsonify(
+        {
+            "paiement": {
+                **dem,
+                "clientName": client_name,
+                "currency": get_currency(),
+                "preuves": preuves,
+            }
+        }
+    )
+
+
+@app.route("/api/admin/paiements/<int:demande_id>/user")
+@require_telegram_user
+def api_admin_paiement_user(demande_id: int):
+    user = g.user
+    if not is_admin(user.get("telegram_id")):
+        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    dem = paiements_repo.get_demande_by_id(demande_id)
+    if not dem or not dem.get("userId"):
+        return jsonify({"error": "Demande / user introuvable"}), 404
+    u = users_repo.get_by_id(int(dem["userId"]))
+    if not u:
+        return jsonify({"error": "User introuvable"}), 404
+    stats = users_repo.get_purchase_stats(int(u["id"]))
+    return jsonify(
+        {
+            "user": {
+                "id": u.get("id"),
+                "telegramId": u.get("telegram_id"),
+                "username": u.get("username"),
+                "firstName": u.get("first_name"),
+                "lastName": u.get("last_name"),
+                "languageCode": u.get("language_code"),
+                "balance": u.get("balance"),
+                "isActive": u.get("is_active"),
+                "firstSeenAt": u["first_seen_at"].isoformat()
+                if u.get("first_seen_at") and hasattr(u.get("first_seen_at"), "isoformat")
+                else u.get("first_seen_at"),
+                "lastSeenAt": u["last_seen_at"].isoformat()
+                if u.get("last_seen_at") and hasattr(u.get("last_seen_at"), "isoformat")
+                else u.get("last_seen_at"),
+                "purchaseCount": stats.get("purchaseCount"),
+                "lastPurchaseAt": stats.get("lastPurchaseAt"),
+            }
+        }
+    )
+
+
+@app.route("/api/admin/paiements/<int:demande_id>/preuves/<int:preuve_id>")
+@require_telegram_user
+def api_admin_paiement_preuve_file(demande_id: int, preuve_id: int):
+    """Sert une preuve — admin uniquement (auth header requis)."""
+    user = g.user
+    if not is_admin(user.get("telegram_id")):
+        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    dem = paiements_repo.get_demande_by_id(demande_id)
+    if not dem:
+        return jsonify({"error": "Demande introuvable"}), 404
+    preuves = paiements_repo.list_preuves(demande_id)
+    cible = next((p for p in preuves if int(p["id"]) == int(preuve_id)), None)
+    if not cible:
+        return jsonify({"error": "Preuve introuvable"}), 404
+    stored = cible.get("storedName") or ""
+    if not stored or "/" in stored or "\\" in stored or ".." in stored:
+        return jsonify({"error": "Fichier invalide"}), 400
+    path = os.path.join(UPLOADS_DIR, str(int(demande_id)), stored)
+    if not os.path.isfile(path):
+        return jsonify({"error": "Fichier introuvable"}), 404
+    mime = (cible.get("mime") or "").strip() or "application/octet-stream"
+    return send_file(path, mimetype=mime, as_attachment=False, download_name=cible.get("filename") or stored)
+
+
+@app.route("/api/admin/paiements/<int:demande_id>/accept", methods=["POST"])
+@require_telegram_user
+def api_admin_paiement_accept(demande_id: int):
+    user = g.user
+    if not is_admin(user.get("telegram_id")):
+        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    from webapp.paiement_review import decide_paiement
+
+    payload, err, status = decide_paiement(demande_id, accept=True)
+    if err:
+        return jsonify({"error": err}), status
+    return jsonify(payload)
+
+
+@app.route("/api/admin/paiements/<int:demande_id>/reject", methods=["POST"])
+@require_telegram_user
+def api_admin_paiement_reject(demande_id: int):
+    user = g.user
+    if not is_admin(user.get("telegram_id")):
+        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    from webapp.paiement_review import decide_paiement
+
+    payload, err, status = decide_paiement(demande_id, accept=False)
+    if err:
+        return jsonify({"error": err}), status
+    return jsonify(payload)
 
 
 @app.route("/api/admin/orders")
