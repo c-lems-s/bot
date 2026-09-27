@@ -558,6 +558,7 @@ def api_search():
     if matched is None:
         return jsonify({"stores": []})
 
+    # Blacklist : badge "indisponible" a la recherche (regles d'ajout plus tard).
     blocked = store_blacklist.get_blacklisted_ids()
     result = []
     for name, city, store_id in matched:
