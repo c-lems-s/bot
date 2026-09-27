@@ -169,26 +169,40 @@ REM Terminal 2 — double-clic ou :
 cloudflare\start-quick.bat
 ```
 
-### Cloud / Railway (gunicorn)
+### Cloud / Railway — démarche
 
-Start command (voir aussi `Procfile`) :
+Le repo est prêt (`Procfile`, `railway.toml`, gunicorn, `/health`).  
+À faire une fois dans le dashboard Railway :
+
+1. **New Project** → Deploy from GitHub (ce repo / branche).  
+2. **Add Plugin / Database** → **PostgreSQL** (lie au service web → injecte `DATABASE_URL`).  
+3. **Variables** du service web :
+
+| Variable | Valeur |
+|----------|--------|
+| `APP_ENV` | `cloud` (optionnel si `RAILWAY_*` détecté) |
+| `TELEGRAM_BOT_TOKEN` | token BotFather |
+| `TELEGRAM_WEBHOOK` | `1` |
+| `TELEGRAM_WEBHOOK_SECRET` | longue chaîne aléatoire |
+| `PUBLIC_BASE_URL` | `https://<ton-app>.up.railway.app` (après 1er deploy) |
+| `SET_WEBHOOK_ON_BOOT` | `1` (enregistre le webhook au démarrage) |
+| `ADMIN_TELEGRAM_ID` | ton id Telegram numérique (seed `config.admin`) |
+
+`DATABASE_URL` est fourni automatiquement par le plugin Postgres.
+
+4. **Deploy** — start command (déjà dans `railway.toml` / `Procfile`) :  
+   `python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app`  
+5. Vérifier `https://<app>/health` → `{"ok": true, "env": "cloud"}`.  
+6. **BotFather** → Menu Button / Mini App → URL = `PUBLIC_BASE_URL`.  
+7. Si le webhook n’est pas auto :  
+   `PUBLIC_BASE_URL=https://… python -m webapp.set_webhook`  
+   (ou `--info` / `--delete`).
+
+Start manuel équivalent :
 
 ```bash
 python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app
 ```
-
-Variables typiques :
-
-```env
-APP_ENV=cloud
-DATABASE_URL=postgresql://…
-TELEGRAM_BOT_TOKEN=…
-TELEGRAM_WEBHOOK=1
-TELEGRAM_WEBHOOK_SECRET=…
-```
-
-Puis enregistrer le webhook Telegram vers  
-`https://<votre-domaine>/telegram/webhook` (header secret).
 
 ---
 
@@ -201,6 +215,8 @@ Puis enregistrer le webhook Telegram vers
 | `python -m db.migrate` | Migrations uniquement |
 | `python -m webapp.boot` | Prep DB selon `APP_ENV` (create local / migrate cloud) |
 | `python -m db.seed_config [--force]` | Import `config.json` → table `config` |
+| `python -m webapp.seed_admin_env` | Pose `config.admin` depuis `ADMIN_TELEGRAM_ID` |
+| `python -m webapp.set_webhook` | Enregistre le webhook Telegram (`PUBLIC_BASE_URL`) |
 | `python -m webapp.server` | Mini-app web (Flask, local) |
 | `gunicorn -c gunicorn.conf.py webapp.wsgi:app` | Mini-app cloud |
 
@@ -214,6 +230,7 @@ KFCPerso/
 ├── config.json          # legacy local, import one-shot seulement
 ├── .env                 # Postgres + Telegram (local)
 ├── Procfile             # start cloud (Railway)
+├── railway.toml         # build / healthcheck / start
 ├── gunicorn.conf.py     # workers / bind cloud
 ├── webapp/              # Flask + auth Telegram + UI
 ├── cloudflare/          # tunnel HTTPS local
@@ -229,6 +246,9 @@ KFCPerso/
 | Symptôme | Piste |
 |----------|--------|
 | `Connexion PostgreSQL impossible` | Postgres démarré ? Mot de passe `.env` ? `python -m db.ensure_db` |
+| Railway : SSL / connection refused | `DATABASE_URL` lié ? `sslmode=require` ajouté auto en cloud |
+| Railway : healthcheck fail | `GET /health` doit répondre 200 |
+| Webhook Telegram KO | `PUBLIC_BASE_URL` https + `TELEGRAM_WEBHOOK_SECRET` ; `python -m webapp.set_webhook --info` |
 | `401 Authentification Telegram requise` | Ouvrir la Mini App depuis Telegram (initData) |
 | `KFC indisponible` | Resto blacklisté |
 | `Module KFC` / imports | Lancer les commandes **depuis** le dossier `KFCPerso` avec le venv activé |

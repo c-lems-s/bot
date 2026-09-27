@@ -6,6 +6,7 @@ Usage :
 
 from __future__ import annotations
 
+import os
 import sys
 
 from dotenv import load_dotenv
@@ -23,15 +24,47 @@ def prepare_runtime() -> None:
 
         print("[boot] Mode local — ensure_database (create + migrate)")
         ensure_database()
+    else:
+        from db.connection import close_pool, init_db
+        from db.migrate import migrate
+
+        print("[boot] Mode cloud / DATABASE_URL — migrate uniquement")
+        close_pool()
+        init_db()
+        migrate()
+
+    _maybe_seed_admin()
+    _maybe_set_webhook()
+
+
+def _maybe_seed_admin() -> None:
+    """Si ADMIN_TELEGRAM_ID est pose et config.admin vide → seed."""
+    raw = (os.getenv("ADMIN_TELEGRAM_ID") or "").strip()
+    if not raw:
         return
+    try:
+        from webapp.seed_admin_env import main as seed_main
 
-    from db.connection import close_pool, init_db
-    from db.migrate import migrate
+        code = seed_main([])
+        if code != 0:
+            print("[boot] seed admin ignore / echec (non bloquant)")
+    except Exception as e:
+        print(f"[boot] seed admin ignore : {e}")
 
-    print("[boot] Mode cloud / DATABASE_URL — migrate uniquement")
-    close_pool()
-    init_db()
-    migrate()
+
+def _maybe_set_webhook() -> None:
+    """Si SET_WEBHOOK_ON_BOOT=1 + PUBLIC_BASE_URL → enregistre le webhook."""
+    flag = (os.getenv("SET_WEBHOOK_ON_BOOT") or "").strip().lower()
+    if flag not in ("1", "true", "yes"):
+        return
+    try:
+        from webapp.set_webhook import main as webhook_main
+
+        code = webhook_main([])
+        if code != 0:
+            print("[boot] set_webhook ignore / echec (non bloquant)")
+    except Exception as e:
+        print(f"[boot] set_webhook ignore : {e}")
 
 
 def main() -> None:

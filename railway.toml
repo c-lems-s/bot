@@ -1,0 +1,12 @@
+# Railway — https://docs.railway.app/reference/config-as-code
+# Le service Postgres doit etre lie (injecte DATABASE_URL).
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

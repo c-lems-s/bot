@@ -30,8 +30,44 @@ except ImportError as e:  # pragma: no cover
 _connection_pool: Optional[pool.ThreadedConnectionPool] = None
 
 
+def _normalize_database_url(url: str) -> str:
+    """Adapte DATABASE_URL Railway / Heroku pour psycopg2.
+
+    - ``postgres://`` → ``postgresql://``
+    - ajoute ``sslmode=require`` en cloud si absent (Railway)
+    """
+    url = (url or "").strip()
+    if not url:
+        return url
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+
+    # sslmode deja present ?
+    if "sslmode=" in url.lower():
+        return url
+
+    try:
+        from webapp.env import is_cloud
+
+        cloud = is_cloud()
+    except Exception:
+        cloud = bool(
+            os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_NAME")
+        )
+
+    force = (os.getenv("PGSSLMODE") or "").strip().lower()
+    if force:
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}sslmode={force}"
+
+    if cloud:
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}sslmode=require"
+    return url
+
+
 def _dsn_kwargs() -> dict:
-    url = (os.getenv("DATABASE_URL") or "").strip()
+    url = _normalize_database_url(os.getenv("DATABASE_URL") or "")
     if url:
         return {"dsn": url}
     return {
