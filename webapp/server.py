@@ -41,12 +41,13 @@ from webapp.access import (  # noqa: E402
 )
 from kfc import store_blacklist  # noqa: E402
 from db import history as order_history  # noqa: E402
-from db.ensure_db import ensure_database  # noqa: E402
 from db.repositories import articles as articles_repo  # noqa: E402
 from db.repositories import paiements as paiements_repo  # noqa: E402
 from db.repositories import sessions as sessions_repo  # noqa: E402
 from db.repositories import users as users_repo  # noqa: E402
 from webapp.auth import require_telegram_user  # noqa: E402
+from webapp.boot import prepare_runtime  # noqa: E402
+from webapp.env import app_env, bind_host, is_cloud, telegram_webhook_enabled  # noqa: E402
 from webapp import session_store  # noqa: E402
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -389,6 +390,12 @@ def _order_payload(sess):
 @app.route("/")
 def index():
     return send_from_directory(STATIC_DIR, "index.html")
+
+
+@app.route("/health")
+def api_health():
+    """Healthcheck infra (Railway / reverse-proxy) — pas d'auth."""
+    return jsonify({"ok": True, "env": app_env()})
 
 
 @app.route("/static/<path:path>")
@@ -1387,22 +1394,34 @@ def _warm_cache():
 
 
 def main():
+    """Lancement local (Flask). Cloud : preferer gunicorn via webapp.wsgi."""
     try:
-        ensure_database()
+        prepare_runtime()
     except Exception as e:
         print(f"[-] PostgreSQL / migrations impossible : {e}")
         print("    Verifiez .env puis : python -m db.ensure_db")
         raise SystemExit(1)
 
+    host = bind_host()
     port = int(os.environ.get("PORT", "8080"))
+    print(f"[server] APP_ENV={app_env()} listen http://{host}:{port}")
+    if is_cloud():
+        print(
+            "[server] Mode cloud : pour la prod, preferer "
+            "`python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app`"
+        )
+
     threading.Thread(target=_warm_cache, daemon=True).start()
     try:
         from webapp.bot_poll import start_polling_thread
 
-        start_polling_thread()
+        if telegram_webhook_enabled():
+            print("[server] TELEGRAM_WEBHOOK=1 — poll desactive")
+        else:
+            start_polling_thread()
     except Exception as e:
         print(f"[!] Poll Telegram ignore : {e}")
-    app.run(host="127.0.0.1", port=port, debug=False)
+    app.run(host=host, port=port, debug=False)
 
 
 if __name__ == "__main__":

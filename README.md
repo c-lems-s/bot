@@ -116,7 +116,22 @@ python -m db.migrate
 
 ---
 
-## Lancer la webapp
+## Deux modes : local + Cloudflare / cloud (Railway)
+
+| | **Local** (`APP_ENV=local`) | **Cloud** (`APP_ENV=cloud` ou Railway) |
+|--|--|--|
+| Lancement | `python -m webapp.server` | `python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app` |
+| Écoute | `127.0.0.1` | `0.0.0.0` |
+| HTTPS | Tunnel Cloudflare | URL fournie par l’hébergeur |
+| Postgres | `DB_*` (+ création auto de la base) | `DATABASE_URL` (migrate seulement) |
+| Telegram | Poll (défaut) | Webhook (`TELEGRAM_WEBHOOK=1`) |
+| Healthcheck | `GET /health` | `GET /health` |
+
+`APP_ENV` est auto-détecté si des variables `RAILWAY_*` sont présentes.
+
+---
+
+## Lancer la webapp (local)
 
 ```bash
 python -m webapp.server
@@ -134,7 +149,7 @@ $env:PORT="9000"; python -m webapp.server
 PORT=9000 python -m webapp.server
 ```
 
-### Production (Telegram)
+### Telegram via Cloudflare (local)
 
 1. `TELEGRAM_BOT_TOKEN` renseigné  
 2. Exposer la webapp en HTTPS (voir dossier [`cloudflare/`](cloudflare/README.md))  
@@ -154,6 +169,27 @@ REM Terminal 2 — double-clic ou :
 cloudflare\start-quick.bat
 ```
 
+### Cloud / Railway (gunicorn)
+
+Start command (voir aussi `Procfile`) :
+
+```bash
+python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app
+```
+
+Variables typiques :
+
+```env
+APP_ENV=cloud
+DATABASE_URL=postgresql://…
+TELEGRAM_BOT_TOKEN=…
+TELEGRAM_WEBHOOK=1
+TELEGRAM_WEBHOOK_SECRET=…
+```
+
+Puis enregistrer le webhook Telegram vers  
+`https://<votre-domaine>/telegram/webhook` (header secret).
+
 ---
 
 ## Commandes utiles
@@ -161,10 +197,12 @@ cloudflare\start-quick.bat
 | Commande | Description |
 |----------|-------------|
 | `pip install -r requirements.txt` | Dépendances |
-| `python -m db.ensure_db` | Crée DB + migrations + seed config |
+| `python -m db.ensure_db` | Crée DB (local) + migrations + seed config |
 | `python -m db.migrate` | Migrations uniquement |
+| `python -m webapp.boot` | Prep DB selon `APP_ENV` (create local / migrate cloud) |
 | `python -m db.seed_config [--force]` | Import `config.json` → table `config` |
-| `python -m webapp.server` | Mini-app web |
+| `python -m webapp.server` | Mini-app web (Flask, local) |
+| `gunicorn -c gunicorn.conf.py webapp.wsgi:app` | Mini-app cloud |
 
 ---
 
@@ -175,7 +213,10 @@ KFCPerso/
 ├── config.example.json  # modele (optionnel pour seed)
 ├── config.json          # legacy local, import one-shot seulement
 ├── .env                 # Postgres + Telegram (local)
+├── Procfile             # start cloud (Railway)
+├── gunicorn.conf.py     # workers / bind cloud
 ├── webapp/              # Flask + auth Telegram + UI
+├── cloudflare/          # tunnel HTTPS local
 ├── kfc/                 # catalogue public (restos + menu)
 ├── db/                  # Postgres (connection, repos, migrate)
 └── migrations/          # SQL versionné

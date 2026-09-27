@@ -48,8 +48,10 @@ def start_polling_thread() -> bool:
     if not tg.bot_token():
         log.warning("TELEGRAM_BOT_TOKEN absent — poll bot desactive")
         return False
+    from webapp.env import telegram_webhook_enabled
+
     # Desactive si webhook explicite
-    if (os.getenv("TELEGRAM_WEBHOOK") or "").strip() in ("1", "true", "True"):
+    if telegram_webhook_enabled():
         log.info("TELEGRAM_WEBHOOK=1 — poll desactive (utilisez /telegram/webhook)")
         return False
     _started = True
