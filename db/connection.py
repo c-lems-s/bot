@@ -2,7 +2,7 @@
 Connexion PostgreSQL (pool thread-safe).
 
 Config via DATABASE_URL ou DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD.
-Les identifiants compte KFC sont dans la table Postgres `config`.
+La config shop (réduction, admin, actif…) est dans la table Postgres `config`.
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
 """
-Backend mini-app Telegram — multi-user, un seul compte KFC (table config).
+Backend mini-app Telegram — multi-user (panier local + solde EUR).
 
 - Auth : Telegram WebApp initData (webapp/auth.py)
-- Isolation app : sessions Postgres par user (plus de STATE global)
-- Compte KFC : partage volontaire, pas de lock concurrence en V1
+- Isolation app : sessions Postgres par user
+- Catalogue : API publique KFC (restos + menu fidélité), checkout local (QUEUED)
 
 Lancement :
     python -m webapp.server
