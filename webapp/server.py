@@ -285,6 +285,7 @@ def static_files(path):
 @app.route("/api/config")
 @require_telegram_user
 def api_config():
+    """Bootstrap Mini App — auth Telegram obligatoire (ou DEV local sans token bot)."""
     user = g.user
     # Solde EUR propre a l'utilisateur (DB) — pas le balance seed table config
     try:

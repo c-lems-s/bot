@@ -2,7 +2,12 @@
 Auth Telegram WebApp (initData).
 
 Valide la signature HMAC et upsert l'utilisateur.
-Dev local : ALLOW_DEV_AUTH=1 + header X-Dev-Telegram-Id (defaut 1).
+
+Dev local (hors Telegram) uniquement si :
+  - ALLOW_DEV_AUTH=1
+  - ET TELEGRAM_BOT_TOKEN est vide
+
+Des qu'un token bot est configure, seuls les initData signes sont acceptes.
 """
 
 from __future__ import annotations
@@ -33,7 +38,14 @@ def _max_age_seconds() -> int:
 
 
 def _dev_auth_enabled() -> bool:
-    return (os.getenv("ALLOW_DEV_AUTH") or "").strip() in ("1", "true", "True", "yes")
+    """True seulement en local explicite, sans token bot (sinon auth Telegram obligatoire)."""
+    flag = (os.getenv("ALLOW_DEV_AUTH") or "").strip() in ("1", "true", "True", "yes")
+    if not flag:
+        return False
+    if _bot_token():
+        # Evite une prod ouverte par erreur (ALLOW_DEV_AUTH=1 + token renseigne).
+        return False
+    return True
 
 
 def validate_webapp_init_data(init_data: str, bot_token: str) -> Dict[str, Any]:
@@ -80,7 +92,9 @@ def resolve_request_user() -> Dict[str, Any]:
     init_data = (request.headers.get("X-Telegram-Init-Data") or "").strip()
     bot_token = _bot_token()
 
-    if init_data and bot_token:
+    if init_data:
+        if not bot_token:
+            raise PermissionError("TELEGRAM_BOT_TOKEN manquant — auth Telegram impossible")
         tg_user = validate_webapp_init_data(init_data, bot_token)
         return users_repo.upsert_from_telegram(
             telegram_id=int(tg_user["id"]),

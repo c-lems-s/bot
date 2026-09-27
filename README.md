@@ -133,18 +133,20 @@ PORT=9000 python -m webapp.server
 
 ### Mode développement (sans Telegram)
 
-Dans `.env` :
+Dans `.env` : **ne pas** renseigner `TELEGRAM_BOT_TOKEN`, et :
 
 ```env
 ALLOW_DEV_AUTH=1
+TELEGRAM_BOT_TOKEN=
 ```
 
 Les appels API acceptent alors un user fictif (header optionnel `X-Dev-Telegram-Id`).
+Dès qu’un `TELEGRAM_BOT_TOKEN` est configuré, `ALLOW_DEV_AUTH` est **ignoré** (auth Telegram obligatoire).
 
 ### Mode production (Telegram)
 
 1. `TELEGRAM_BOT_TOKEN` renseigné  
-2. `ALLOW_DEV_AUTH=0`  
+2. `ALLOW_DEV_AUTH=0` (recommandé ; ignoré de toute façon si le token est présent)  
 3. Exposer la webapp en HTTPS (voir dossier [`cloudflare/`](cloudflare/README.md))  
 4. Coller l’URL HTTPS dans BotFather (Menu Button / Mini App)  
 5. Ouvrir la Mini App **depuis Telegram** (le front envoie `X-Telegram-Init-Data`)
