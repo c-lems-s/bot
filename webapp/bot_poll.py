@@ -7,7 +7,6 @@ Lance en thread daemon depuis webapp.server, ou :
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 
