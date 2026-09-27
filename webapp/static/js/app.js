@@ -1318,6 +1318,7 @@ async function adminAcceptPaiement() {
     renderAdminPaiements();
     showScreen("paiement");
     setNav("admin");
+    refreshAdminBadge();
   } catch (e) {
     toast(e.message || "Echec");
   } finally {
@@ -1338,6 +1339,7 @@ async function adminRejectPaiement() {
     renderAdminPaiements();
     showScreen("paiement");
     setNav("admin");
+    refreshAdminBadge();
   } catch (e) {
     toast(e.message || "Echec");
   } finally {
@@ -1361,6 +1363,7 @@ async function adminCancelOrder() {
     renderAdminOrders();
     showScreen("commande");
     setNav("admin");
+    refreshAdminBadge();
   } catch (e) {
     toast(e.message || "Echec annulation");
   } finally {
