@@ -29,7 +29,6 @@ from kfc.config import (  # noqa: E402
     get_currency,
     get_prochaine_heure,
     get_reduction,
-    get_version,
     is_admin,
     is_shop_actif,
     shop_inactive_message,
@@ -71,7 +70,7 @@ def _no_cache(response):
 
 # Routes API accessibles meme si le shop est inactif
 _SHOP_OPEN_EXEMPT_PREFIXES = (
-    "/api/config",
+    "/api/me",
     "/telegram/",
 )
 
@@ -103,11 +102,95 @@ POINTS_LIMIT = 2500
 SOON_LABEL = "Bientôt disponible"
 
 
-def _build_store_menu(store_menu, session_id: int):
-    """Menu resto KFC croise avec table article (prix/label/cost)."""
+def _unit_price_from_catalog(art: dict) -> float:
+    """Prix client final (catalogue × reduction). Source de verite serveur."""
+    original = float(art["price"])
+    return apply_reduction(original, get_reduction())
+
+
+def _reprice_cart(cart: list) -> list:
+    """Recalcule prix/points depuis le catalogue — ignore toute valeur client/session."""
+    if not cart:
+        return []
+    ids = [str(e.get("itemId") or "") for e in cart if e.get("itemId")]
+    catalog = articles_repo.get_by_kfc_ids(ids)
+    priced = []
+    for e in cart:
+        item_id = str(e.get("itemId") or "")
+        art = catalog.get(item_id)
+        if not art or art.get("price") is None or not str(art.get("label") or "").strip():
+            raise ValueError(
+                f"Article sans prix catalogue : {e.get('name') or item_id}"
+            )
+        try:
+            qty = int(e.get("quantity") or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        qty = max(1, qty)
+        cost = art.get("cost")
+        try:
+            cost = int(cost) if cost is not None else None
+        except (TypeError, ValueError):
+            cost = None
+        entry = dict(e)
+        entry["itemId"] = item_id
+        entry["price"] = _unit_price_from_catalog(art)
+        entry["cost"] = cost
+        entry["quantity"] = qty
+        entry.pop("reduction", None)
+        entry.pop("originalPrice", None)
+        priced.append(entry)
+    return priced
+
+
+def _public_cart_items(cart: list) -> list:
+    """Payload panier pour le client : aucun %, aucun prix catalogue brut."""
+    return [
+        {
+            "id": e["uid"],
+            "name": e["name"],
+            "image": e.get("image", ""),
+            "options": e.get("options", []),
+            "quantity": e.get("quantity", 1),
+            "price": e.get("price"),
+        }
+        for e in cart
+    ]
+
+
+def _can_add_by_item(session_id: int, points_used: int) -> dict:
+    """Flags canAdd par itemId — calcule cote serveur uniquement."""
+    points_used = max(0, int(points_used or 0))
+    out = {}
+    for item_id, it in (session_store.get_menu_items(session_id) or {}).items():
+        cost = it.get("cost")
+        try:
+            cost_i = int(cost) if cost is not None else None
+        except (TypeError, ValueError):
+            cost_i = None
+        if cost_i is None:
+            out[str(item_id)] = True
+        else:
+            out[str(item_id)] = (points_used + cost_i) <= POINTS_LIMIT
+    return out
+
+
+def _cart_public_payload(sess, cart: list) -> dict:
+    points = session_store.cart_points(cart)
+    return {
+        "items": _public_cart_items(cart),
+        "points": points,
+        "pointsLimit": POINTS_LIMIT,
+        "total": session_store.cart_total_eur(cart),
+        "currency": get_currency(),
+        "canAddByItemId": _can_add_by_item(sess["id"], points) if sess else {},
+    }
+
+
+def _build_store_menu(store_menu, session_id: int, *, points_used: int = 0):
+    """Menu resto KFC croise avec table article (prix final uniquement)."""
     menu_items = {}
     raw_items = []
-    reduction = get_reduction()
 
     for items in store_menu.values():
         for it in items:
@@ -118,44 +201,51 @@ def _build_store_menu(store_menu, session_id: int):
     catalog = articles_repo.get_by_kfc_ids(menu_items.keys())
     grouped = {}
     label_order = []
+    points_used = max(0, int(points_used or 0))
 
     for it in raw_items:
         item_id = str(it["id"])
         art = catalog.get(item_id)
         if art and art.get("price") is not None and str(art.get("label") or "").strip():
             label = str(art["label"]).strip()
-            original_price = float(art["price"])
-            price = apply_reduction(original_price, reduction)
+            price = _unit_price_from_catalog(art)
             cost = art.get("cost")
             if cost is None:
                 cost = it.get("cost")
+            try:
+                cost_i = int(cost) if cost is not None else None
+            except (TypeError, ValueError):
+                cost_i = None
             available = True
+            can_add = cost_i is None or (points_used + cost_i) <= POINTS_LIMIT
         else:
             label = SOON_LABEL
-            original_price = None
             price = None
-            cost = it.get("cost")
+            cost_i = None
+            try:
+                cost_i = int(it.get("cost")) if it.get("cost") is not None else None
+            except (TypeError, ValueError):
+                cost_i = None
             available = False
+            can_add = False
 
         if label not in grouped:
             grouped[label] = []
             label_order.append(label)
 
-        # Enrichit le cache menu avec cost catalogue (plafond pts)
         cached = dict(it)
-        if cost is not None:
-            cached["cost"] = cost
+        if cost_i is not None:
+            cached["cost"] = cost_i
         menu_items[item_id] = cached
 
         grouped[label].append(
             {
                 "id": item_id,
                 "name": it["name"],
-                "cost": cost,
-                "originalPrice": original_price,
+                "cost": cost_i,
                 "price": price,
-                "reduction": reduction,
                 "available": available,
+                "canAdd": bool(available and can_add),
                 "image": it.get("image", ""),
                 "hasOptions": "modgrps" in it,
             }
@@ -282,42 +372,47 @@ def static_files(path):
     return send_from_directory(STATIC_DIR, path)
 
 
-@app.route("/api/config")
+@app.route("/api/me")
 @require_telegram_user
-def api_config():
-    """Bootstrap Mini App — auth Telegram obligatoire (ou DEV local sans token bot)."""
+def api_me():
+    """Bootstrap session user — aucune donnee table config (reduction, admin id, …)."""
     user = g.user
-    # Solde EUR propre a l'utilisateur (DB) — pas le balance seed table config
     try:
         balance = float(user.get("balance", 0) or 0)
     except (TypeError, ValueError):
         balance = 0.0
 
-    from webapp.auth import _dev_auth_enabled
     from db.repositories import orders as orders_repo
 
     ma = orders_repo.get_ma_commande(user["id"])
+    shop_open = True
+    try:
+        shop_open = bool(is_shop_actif())
+    except Exception:
+        shop_open = True
 
-    payload = {
-        "balance": balance,
-        "currency": get_currency(),
-        "reduction": get_reduction(),
-        "isAdmin": is_admin(user.get("telegram_id")),
-        "hasMaCommande": ma is not None,
-        "actif": is_shop_actif(),
-        "prochaineHeure": get_prochaine_heure(),
-        "inactiveMessage": None if is_shop_actif() else shop_inactive_message(),
-        "user": {
-            "id": user["id"],
-            "telegramId": user["telegram_id"],
-            "username": user.get("username"),
-            "firstName": user.get("first_name"),
-        },
-    }
-    if _dev_auth_enabled():
-        payload["devAuth"] = True
-        payload["version"] = get_version()
-    return jsonify(payload)
+    return jsonify(
+        {
+            "balance": balance,
+            "currency": get_currency(),
+            "hasMaCommande": ma is not None,
+            # Droit UI uniquement ; chaque /api/admin/* re-verifie is_admin().
+            "showAdmin": is_admin(user.get("telegram_id")),
+            "shopOpen": shop_open,
+            "shopMessage": None if shop_open else shop_inactive_message(),
+            "prochaineHeure": None if shop_open else get_prochaine_heure(),
+            "pointsLimit": POINTS_LIMIT,
+        }
+    )
+
+
+@app.route("/api/config")
+@require_telegram_user
+def api_config_removed():
+    """Ancien endpoint — ne plus exposer la config shop."""
+    return jsonify(
+        {"error": "Endpoint retire. Utilisez /api/me.", "code": "GONE"}
+    ), 410
 
 
 @app.route("/api/wallet")
@@ -611,7 +706,7 @@ def api_select_store():
         store_name=name,
         store_city=city,
     )
-    categories = _build_store_menu(store_menu, sess["id"])
+    categories = _build_store_menu(store_menu, sess["id"], points_used=0)
 
     return jsonify(
         {
@@ -619,8 +714,9 @@ def api_select_store():
             "categories": categories,
             "available": True,
             "sessionId": sess["id"],
-            "reduction": get_reduction(),
             "currency": get_currency(),
+            "points": 0,
+            "pointsLimit": POINTS_LIMIT,
         }
     )
 
@@ -646,15 +742,11 @@ def api_item_options():
         return jsonify(
             {"error": "Article bientot disponible — non commandable."}
         ), 403
-    original = float(art["price"])
-    reduction = get_reduction()
     return jsonify(
         {
             "name": it["name"],
             "cost": it.get("cost", 0),
-            "originalPrice": original,
-            "price": apply_reduction(original, reduction),
-            "reduction": reduction,
+            "price": _unit_price_from_catalog(art),
             "modgrps": _clean_modgrps(it.get("modgrps", [])),
         }
     )
@@ -669,6 +761,7 @@ def api_add_item():
         return jsonify({"error": "Aucune session active — choisissez un restaurant."}), 400
 
     data = request.json or {}
+    # Ignorer price/cost/reduction eventuels envoyes par le client.
     itemId = data.get("itemId")
     modgrps = data.get("modgrps", [])
 
@@ -690,14 +783,10 @@ def api_add_item():
         ), 403
 
     try:
-        original_price = float(art["price"])
+        unit_price = _unit_price_from_catalog(art)
     except (TypeError, ValueError):
         return jsonify({"error": "Prix article invalide en catalogue."}), 500
 
-    reduction = get_reduction()
-    unit_price = apply_reduction(original_price, reduction)
-
-    # Points catalogue (table article), pas le compte KFC
     cost = art.get("cost")
     if cost is None:
         cost = it.get("cost")
@@ -707,6 +796,10 @@ def api_add_item():
         cost = None
 
     cart = list(sess.get("cart") or [])
+    try:
+        cart = _reprice_cart(cart)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
     points_now = session_store.cart_points(cart)
 
     if cost is not None and (points_now + cost) > POINTS_LIMIT:
@@ -715,7 +808,7 @@ def api_add_item():
                 "error": f"Limite de {POINTS_LIMIT} points depassee "
                 f"({points_now} + {cost}).",
                 "points": points_now,
-                "limit": POINTS_LIMIT,
+                "pointsLimit": POINTS_LIMIT,
             }
         ), 409
 
@@ -731,9 +824,7 @@ def api_add_item():
             "image": it.get("image", ""),
             "options": options,
             "cost": cost,
-            "originalPrice": original_price,
             "price": unit_price,
-            "reduction": reduction,
             "quantity": 1,
             "kfc": {
                 "id": it["id"],
@@ -746,15 +837,9 @@ def api_add_item():
         }
     )
     sessions_repo.save(sess["id"], user["id"], status="DRAFT", cart=cart)
-    return jsonify(
-        {
-            "ok": True,
-            "points": session_store.cart_points(cart),
-            "limit": POINTS_LIMIT,
-            "total": session_store.cart_total_eur(cart),
-            "currency": get_currency(),
-        }
-    )
+    payload = _cart_public_payload(sess, cart)
+    payload["ok"] = True
+    return jsonify(payload)
 
 
 @app.route("/api/basket")
@@ -763,29 +848,13 @@ def api_basket():
     user = g.user
     sess = session_store.require_open_session(user["id"])
     cart = (sess or {}).get("cart") or []
-    items = [
-        {
-            "id": e["uid"],
-            "name": e["name"],
-            "image": e.get("image", ""),
-            "options": e.get("options", []),
-            "quantity": e.get("quantity", 1),
-            "originalPrice": e.get("originalPrice"),
-            "price": e.get("price"),
-            "reduction": e.get("reduction"),
-        }
-        for e in cart
-    ]
-    return jsonify(
-        {
-            "items": items,
-            "points": session_store.cart_points(cart),
-            "limit": POINTS_LIMIT,
-            "total": session_store.cart_total_eur(cart),
-            "currency": get_currency(),
-            "reduction": get_reduction(),
-        }
-    )
+    try:
+        cart = _reprice_cart(cart)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+    if sess:
+        sessions_repo.save(sess["id"], user["id"], cart=cart)
+    return jsonify(_cart_public_payload(sess, cart))
 
 
 @app.route("/api/remove-item", methods=["POST"])
@@ -809,16 +878,14 @@ def api_remove_item():
         return jsonify({"error": "Article introuvable dans le panier"}), 404
 
     cart = [e for e in cart if e.get("uid") != uid]
+    try:
+        cart = _reprice_cart(cart)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
     sessions_repo.save(sess["id"], user["id"], cart=cart)
-    return jsonify(
-        {
-            "ok": True,
-            "points": session_store.cart_points(cart),
-            "limit": POINTS_LIMIT,
-            "total": session_store.cart_total_eur(cart),
-            "currency": get_currency(),
-        }
-    )
+    payload = _cart_public_payload(sess, cart)
+    payload["ok"] = True
+    return jsonify(payload)
 
 
 @app.route("/api/checkout", methods=["POST"])
@@ -834,16 +901,13 @@ def api_checkout():
     if not cart:
         return jsonify({"error": "Panier vide"}), 400
 
-    for e in cart:
-        if e.get("price") is None:
-            return jsonify(
-                {
-                    "error": (
-                        f"Article sans prix catalogue : "
-                        f"{e.get('name') or e.get('itemId')}"
-                    )
-                }
-            ), 409
+    # Autorite absolue : recalcul catalogue + reduction, ignore panier manipule.
+    try:
+        cart = _reprice_cart(cart)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+    sessions_repo.save(sess["id"], user["id"], cart=cart)
+    sess = {**sess, "cart": cart}
 
     points_total = session_store.cart_points(cart)
     if points_total > POINTS_LIMIT:

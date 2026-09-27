@@ -16,7 +16,7 @@ Mini-app Telegram pour commander chez KFC France (catalogue local + solde EUR).
 | PostgreSQL | 14+ | Base de données |
 | Bot Telegram | token BotFather | Auth WebApp (prod) |
 
-Optionnel en local : navigateur seul avec `ALLOW_DEV_AUTH=1` (sans Telegram).
+Auth : uniquement Telegram WebApp (`initData` signé). Pas de mode DEV.
 
 ---
 
@@ -57,12 +57,7 @@ DB_NAME=kfc_perso
 DB_USER=postgres
 DB_PASSWORD=ton_mot_de_passe
 
-# Prod Telegram
 TELEGRAM_BOT_TOKEN=123456:ABC...
-ALLOW_DEV_AUTH=0
-
-# Dev local hors Telegram
-# ALLOW_DEV_AUTH=1
 ```
 
 PostgreSQL doit tourner et l’utilisateur doit pouvoir créer une base.
@@ -131,25 +126,15 @@ $env:PORT="9000"; python -m webapp.server
 PORT=9000 python -m webapp.server
 ```
 
-### Mode développement (sans Telegram)
-
-Dans `.env` : **ne pas** renseigner `TELEGRAM_BOT_TOKEN`, et :
-
-```env
-ALLOW_DEV_AUTH=1
-TELEGRAM_BOT_TOKEN=
-```
-
-Les appels API acceptent alors un user fictif (header optionnel `X-Dev-Telegram-Id`).
-Dès qu’un `TELEGRAM_BOT_TOKEN` est configuré, `ALLOW_DEV_AUTH` est **ignoré** (auth Telegram obligatoire).
-
-### Mode production (Telegram)
+### Production (Telegram)
 
 1. `TELEGRAM_BOT_TOKEN` renseigné  
-2. `ALLOW_DEV_AUTH=0` (recommandé ; ignoré de toute façon si le token est présent)  
-3. Exposer la webapp en HTTPS (voir dossier [`cloudflare/`](cloudflare/README.md))  
-4. Coller l’URL HTTPS dans BotFather (Menu Button / Mini App)  
-5. Ouvrir la Mini App **depuis Telegram** (le front envoie `X-Telegram-Init-Data`)
+2. Exposer la webapp en HTTPS (voir dossier [`cloudflare/`](cloudflare/README.md))  
+3. Coller l’URL HTTPS dans BotFather (Menu Button / Mini App)  
+4. Ouvrir la Mini App **depuis Telegram** (le front envoie `X-Telegram-Init-Data`)
+
+Sans `initData` valide → les routes `/api/*` répondent **401**.  
+La config shop (`reduction`, `admin`, …) n’est **jamais** exposée au client ; bootstrap via `GET /api/me`.
 
 Quick tunnel (test) :
 
@@ -160,8 +145,6 @@ python -m webapp.server
 REM Terminal 2 — double-clic ou :
 cloudflare\start-quick.bat
 ```
-
-Sans `initData` valide → les routes `/api/*` répondent **401**.
 
 ---
 
@@ -197,7 +180,7 @@ KFCPerso/
 | Symptôme | Piste |
 |----------|--------|
 | `Connexion PostgreSQL impossible` | Postgres démarré ? Mot de passe `.env` ? `python -m db.ensure_db` |
-| `401 Authentification Telegram requise` | Ouvrir via Telegram, ou `ALLOW_DEV_AUTH=1` en local |
+| `401 Authentification Telegram requise` | Ouvrir la Mini App depuis Telegram (initData) |
 | `KFC indisponible` | Resto blacklisté |
 | `Module KFC` / imports | Lancer les commandes **depuis** le dossier `KFCPerso` avec le venv activé |
 
@@ -206,4 +189,4 @@ KFCPerso/
 ## Rappel sécurité
 
 - Ne commit **jamais** `.env` ni un `config.json` rempli
-- En prod : `ALLOW_DEV_AUTH=0` et HTTPS pour la Mini App
+- En prod : HTTPS pour la Mini App ; ne jamais exposer la table `config` au client

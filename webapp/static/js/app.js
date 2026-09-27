@@ -13,9 +13,6 @@ const api = async (path, body) => {
       "X-Telegram-Init-Data": (tg && tg.initData) ? tg.initData : "",
     },
   };
-  if (typeof window !== "undefined" && window.KFC_DEV_TELEGRAM_ID) {
-    opt.headers["X-Dev-Telegram-Id"] = String(window.KFC_DEV_TELEGRAM_ID);
-  }
   if (body !== undefined) {
     opt.method = "POST";
     opt.body = JSON.stringify(body);
@@ -44,13 +41,13 @@ const state = {
   currentItem: null,   // { name, modgrps }
   cartCount: 0,
   points: 0,
-  limit: 2500,
+  pointsLimit: 2500,
   lastOrder: null,     // { number, uuid, state }
   walletMoyens: [],
   topupDemandeId: null,
   topupMontant: null,
   topupDemande: null,
-  isAdmin: false,
+  showAdmin: false,
   hasMaCommande: false,
   adminOrderId: null,
 };
@@ -61,26 +58,14 @@ const POINTS_LIMIT_MSG =
   "Vous pouvez faire plusieurs commandes successives sans souci. " +
   "Vous pouvez également supprimer des articles de votre panier actuel.";
 
-function pointsRemaining() {
-  const limit = Number(state.limit) || 2500;
-  const used = Number(state.points) || 0;
-  return Math.max(0, limit - used);
-}
-
-function itemExceedsPointsLimit(it) {
-  if (it == null || it.cost == null) return false;
-  const cost = Number(it.cost);
-  if (!Number.isFinite(cost)) return false;
-  return cost > pointsRemaining();
-}
-
 function updatePointsLimitBanner() {
   const banner = $("points-limit-banner");
   if (!banner) return;
   const cats = state.categories || [];
+  // Affichage seul : canAdd vient du backend (select-store / recalcul serveur).
   const anyBlocked = cats.some((cat) =>
     (cat.items || []).some(
-      (it) => it.available !== false && it.price != null && itemExceedsPointsLimit(it)
+      (it) => it.available !== false && it.price != null && it.canAdd === false
     )
   );
   banner.hidden = !anyBlocked;
@@ -236,6 +221,8 @@ async function selectStore(s) {
     const data = await api("/api/select-store", { storeId: s.id, name: s.name, city: s.city });
     state.menuLoaded = true;
     state.categories = data.categories;
+    if (data.pointsLimit != null) state.pointsLimit = data.pointsLimit;
+    if (data.points != null) state.points = data.points;
     renderMenu(data.categories);
     refreshCart();
   } catch (e) {
@@ -276,9 +263,9 @@ function renderMenu(categories) {
     cat.items.forEach((it) => {
       const card = document.createElement("div");
       const inCatalog = it.available !== false && it.price != null;
-      const overLimit = inCatalog && itemExceedsPointsLimit(it);
-      const selectable = inCatalog && !overLimit;
-      card.className = selectable
+      const canAdd = inCatalog && it.canAdd !== false;
+      const overLimit = inCatalog && it.canAdd === false;
+      card.className = canAdd
         ? "product-card"
         : overLimit
           ? "product-card unavailable over-limit"
@@ -299,8 +286,8 @@ function renderMenu(categories) {
       } else if (overLimit) {
         priceHtml = `<div class="product-price soon">Limite panier atteinte</div>`;
       } else {
+        // Prix final serveur uniquement (pas de % / prix catalogue).
         priceHtml = `<div class="product-price-row">
-             <span class="price-old">${Number(it.originalPrice != null ? it.originalPrice : it.price).toFixed(2)} €</span>
              <span class="price-new">${Number(it.price).toFixed(2)} €</span>
            </div>`;
       }
@@ -310,7 +297,7 @@ function renderMenu(categories) {
           <div class="product-name">${escapeHtml(it.name)}</div>
           ${priceHtml}
         </div>`;
-      if (selectable) {
+      if (canAdd) {
         card.onclick = () => onItemClick(it);
       } else if (overLimit) {
         card.onclick = () => showPointsLimitOverlay();
@@ -327,7 +314,7 @@ async function onItemClick(it) {
     toast("Bientôt disponible");
     return;
   }
-  if (itemExceedsPointsLimit(it)) {
+  if (it.canAdd === false) {
     showPointsLimitOverlay();
     return;
   }
@@ -502,7 +489,8 @@ async function addItem(itemId, modgrps) {
     const data = await api("/api/add-item", { itemId, modgrps });
     toast("Ajouté au panier");
     if (data.points != null) state.points = data.points;
-    if (data.limit != null) state.limit = data.limit;
+    if (data.pointsLimit != null) state.pointsLimit = data.pointsLimit;
+    applyCanAddFlags(data.canAddByItemId);
     await refreshCart();
   } catch (e) {
     toast(e.message);
@@ -522,7 +510,8 @@ async function refreshCart() {
       badge.hidden = true;
     }
     state.points = data.points || 0;
-    state.limit = data.limit || 2500;
+    if (data.pointsLimit != null) state.pointsLimit = data.pointsLimit;
+    applyCanAddFlags(data.canAddByItemId);
     renderCart(data);
     refreshMenuLimits();
   } catch (e) {
@@ -530,24 +519,28 @@ async function refreshCart() {
   }
 }
 
-/* Affiche le solde client dans la pastille du header. */
+/** Applique les flags canAdd fournis par le backend (aucune regle metier locale). */
+function applyCanAddFlags(canAddByItemId) {
+  if (!canAddByItemId || typeof canAddByItemId !== "object") return;
+  state.categories = (state.categories || []).map((cat) => ({
+    ...cat,
+    items: (cat.items || []).map((it) => {
+      const key = String(it.id);
+      if (!(key in canAddByItemId)) return it;
+      if (it.available === false || it.price == null) {
+        return { ...it, canAdd: false };
+      }
+      return { ...it, canAdd: !!canAddByItemId[key] };
+    }),
+  }));
+}
+
+/* Affiche le solde client (valeur serveur) — jamais utilise pour autoriser un paiement. */
 function setBalance(balance, currency) {
   state.balance = balance;
   state.currency = currency || "EUR";
   const el = $("balance-value");
   if (el) el.textContent = `${Number(balance).toFixed(2)} ${state.currency}`;
-}
-
-function setDevVersion(cfg) {
-  const el = $("app-version");
-  if (!el) return;
-  if (cfg && cfg.devAuth && cfg.version != null && String(cfg.version).trim() !== "") {
-    el.textContent = `v-${String(cfg.version).trim()}`;
-    el.hidden = false;
-  } else {
-    el.textContent = "";
-    el.hidden = true;
-  }
 }
 
 function renderCart(data) {
@@ -565,9 +558,7 @@ function renderCart(data) {
       row.className = "cart-row";
       const price =
         it.price != null
-          ? (it.originalPrice != null && Number(it.originalPrice) !== Number(it.price)
-              ? `<span class="c-price-wrap"><span class="price-old">${Number(it.originalPrice).toFixed(2)}</span><span class="price-new">${Number(it.price).toFixed(2)} ${currency}</span></span>`
-              : `<span class="c-pts">${Number(it.price).toFixed(2)} ${currency}</span>`)
+          ? `<span class="c-pts">${Number(it.price).toFixed(2)} ${currency}</span>`
           : "";
       const opts = (it.options && it.options.length)
         ? `<div class="c-opts">${escapeHtml(it.options.join(" · "))}</div>`
@@ -688,21 +679,18 @@ document.querySelectorAll(".nav-item").forEach((n) => {
     } else if (nav === "sav") {
       showScreen("sav");
     } else if (nav === "commande") {
-      if (!state.isAdmin) {
-        toast("Acces admin requis");
-        return;
-      }
+      // Affichage seul : le backend renvoie 403 si non-admin.
       renderAdminOrders();
       showScreen("commande");
     }
   };
 });
 
-function setAdminNav(isAdmin) {
-  state.isAdmin = !!isAdmin;
+function setAdminNav(showAdmin) {
+  state.showAdmin = !!showAdmin;
   const btn = $("nav-commande");
-  if (btn) btn.hidden = !state.isAdmin;
-  document.body.classList.toggle("is-admin", state.isAdmin);
+  if (btn) btn.hidden = !state.showAdmin;
+  document.body.classList.toggle("is-admin", state.showAdmin);
 }
 
 function setMaCommandeNav(visible) {
@@ -1379,13 +1367,13 @@ function renderHistory() {
 /* ---------- Démarrage ---------- */
 (async function init() {
   try {
-    const cfg = await api("/api/config");
-    setBalance(cfg.balance != null ? cfg.balance : 0, cfg.currency || "EUR");
-    setDevVersion(cfg);
-    setAdminNav(!!cfg.isAdmin);
-    setMaCommandeNav(!!cfg.hasMaCommande);
-    if (cfg.actif === false) {
-      showShopInactive(cfg.inactiveMessage, cfg.prochaineHeure);
+    const me = await api("/api/me");
+    setBalance(me.balance != null ? me.balance : 0, me.currency || "EUR");
+    setAdminNav(!!me.showAdmin);
+    setMaCommandeNav(!!me.hasMaCommande);
+    if (me.pointsLimit != null) state.pointsLimit = me.pointsLimit;
+    if (me.shopOpen === false) {
+      showShopInactive(me.shopMessage, me.prochaineHeure);
       return;
     }
   } catch (e) {
@@ -1394,7 +1382,6 @@ function renderHistory() {
       return;
     }
     setBalance(0, "EUR");
-    setDevVersion(null);
     setAdminNav(false);
     setMaCommandeNav(false);
   }
