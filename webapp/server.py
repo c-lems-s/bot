@@ -29,9 +29,15 @@ from kfc.config import (  # noqa: E402
     get_currency,
     get_prochaine_heure,
     get_reduction,
-    is_admin,
     is_shop_actif,
     shop_inactive_message,
+)
+from webapp.access import (  # noqa: E402
+    current_access,
+    get_access,
+    log_staff_action,
+    require_full_admin,
+    require_perm,
 )
 from kfc import store_blacklist  # noqa: E402
 from db import history as order_history  # noqa: E402
@@ -409,13 +415,24 @@ def api_me():
     except Exception:
         shop_open = True
 
+    access = get_access(user.get("telegram_id"))
     return jsonify(
         {
             "balance": balance,
             "currency": get_currency(),
             "hasMaCommande": ma is not None,
-            # Droit UI uniquement ; chaque /api/admin/* re-verifie is_admin().
-            "showAdmin": is_admin(user.get("telegram_id")),
+            # Droit UI uniquement ; chaque /api/admin/* re-verifie les perms.
+            "showAdmin": bool(access),
+            "isFullAdmin": bool(access and access.get("fullAdmin")),
+            "adminAccess": {
+                "commandes": bool(access and access.get("commandes")),
+                "paiements": bool(access and access.get("paiements")),
+                "gestion": bool(access and access.get("gestion")),
+                "notification": bool(access and access.get("notification")),
+                "staff": bool(access and access.get("staff")),
+            }
+            if access
+            else None,
             "shopOpen": shop_open,
             "shopMessage": None if shop_open else shop_inactive_message(),
             "prochaineHeure": None if shop_open else get_prochaine_heure(),
@@ -1053,18 +1070,18 @@ def api_history():
 @require_telegram_user
 def api_admin_paiements():
     """File d'attente recharges PENDING — admin uniquement."""
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("paiements")
+    if denied:
+        return denied
     return jsonify({"paiements": paiements_repo.list_pending_for_admin(limit=100)})
 
 
 @app.route("/api/admin/paiements/<int:demande_id>")
 @require_telegram_user
 def api_admin_paiement_detail(demande_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("paiements")
+    if denied:
+        return denied
     dem = paiements_repo.get_demande_by_id(demande_id)
     if not dem or dem.get("status") != "PENDING":
         return jsonify({"error": "Demande introuvable"}), 404
@@ -1096,9 +1113,9 @@ def api_admin_paiement_detail(demande_id: int):
 @app.route("/api/admin/paiements/<int:demande_id>/user")
 @require_telegram_user
 def api_admin_paiement_user(demande_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("paiements")
+    if denied:
+        return denied
     dem = paiements_repo.get_demande_by_id(demande_id)
     if not dem or not dem.get("userId"):
         return jsonify({"error": "Demande / user introuvable"}), 404
@@ -1134,9 +1151,9 @@ def api_admin_paiement_user(demande_id: int):
 @require_telegram_user
 def api_admin_paiement_preuve_file(demande_id: int, preuve_id: int):
     """Sert une preuve — admin uniquement (auth header requis)."""
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("paiements")
+    if denied:
+        return denied
     dem = paiements_repo.get_demande_by_id(demande_id)
     if not dem:
         return jsonify({"error": "Demande introuvable"}), 404
@@ -1157,28 +1174,30 @@ def api_admin_paiement_preuve_file(demande_id: int, preuve_id: int):
 @app.route("/api/admin/paiements/<int:demande_id>/accept", methods=["POST"])
 @require_telegram_user
 def api_admin_paiement_accept(demande_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("paiements")
+    if denied:
+        return denied
     from webapp.paiement_review import decide_paiement
 
     payload, err, status = decide_paiement(demande_id, accept=True)
     if err:
         return jsonify({"error": err}), status
+    log_staff_action("payment_accept", f"demande #{demande_id}")
     return jsonify(payload)
 
 
 @app.route("/api/admin/paiements/<int:demande_id>/reject", methods=["POST"])
 @require_telegram_user
 def api_admin_paiement_reject(demande_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("paiements")
+    if denied:
+        return denied
     from webapp.paiement_review import decide_paiement
 
     payload, err, status = decide_paiement(demande_id, accept=False)
     if err:
         return jsonify({"error": err}), status
+    log_staff_action("payment_reject", f"demande #{demande_id}")
     return jsonify(payload)
 
 
@@ -1186,9 +1205,9 @@ def api_admin_paiement_reject(demande_id: int):
 @require_telegram_user
 def api_admin_orders():
     """File d'attente commandes en cours — admin uniquement."""
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("commandes")
+    if denied:
+        return denied
     from db.repositories import orders as orders_repo
 
     return jsonify({"orders": orders_repo.list_queued_for_admin(limit=100)})
@@ -1197,9 +1216,9 @@ def api_admin_orders():
 @app.route("/api/admin/orders/<int:order_id>")
 @require_telegram_user
 def api_admin_order_detail(order_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("commandes")
+    if denied:
+        return denied
     from db.repositories import orders as orders_repo
 
     order = orders_repo.get_order_by_id(order_id)
@@ -1211,9 +1230,9 @@ def api_admin_order_detail(order_id: int):
 @app.route("/api/admin/orders/<int:order_id>/user")
 @require_telegram_user
 def api_admin_order_user(order_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("commandes")
+    if denied:
+        return denied
     from db.repositories import orders as orders_repo
 
     order = orders_repo.get_order_by_id(order_id)
@@ -1251,20 +1270,24 @@ def api_admin_order_user(order_id: int):
 @require_telegram_user
 def api_admin_pending_count():
     """Nombre de commandes + paiements non traites (badge Admin)."""
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("panel")
+    if denied:
+        return denied
     from webapp.bot_notify import pending_counts
 
-    return jsonify(pending_counts())
+    access = current_access() or {}
+    data = pending_counts()
+    orders = data["orders"] if access.get("commandes") else 0
+    paiements = data["paiements"] if access.get("paiements") else 0
+    return jsonify({"orders": orders, "paiements": paiements, "count": orders + paiements})
 
 
 @app.route("/api/admin/orders/<int:order_id>/complete", methods=["POST"])
 @require_telegram_user
 def api_admin_order_complete(order_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("commandes")
+    if denied:
+        return denied
     from db.repositories import orders as orders_repo
     from webapp.bot_notify import notify_user
 
@@ -1285,15 +1308,16 @@ def api_admin_order_complete(order_id: int):
             client.get("telegram_id"),
             "Votre commande a ete acceptee. Consultez « Ma commande » pour le detail.",
         )
+    log_staff_action("order_complete", f"order #{order_id}")
     return jsonify({"order": order})
 
 
 @app.route("/api/admin/orders/<int:order_id>/cancel", methods=["POST"])
 @require_telegram_user
 def api_admin_order_cancel(order_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("commandes")
+    if denied:
+        return denied
     from db.repositories import orders as orders_repo
     from webapp.bot_notify import notify_user
 
@@ -1331,6 +1355,7 @@ def api_admin_order_cancel(order_id: int):
         msg += "\nConsultez « Ma commande » pour le detail."
         notify_user(client.get("telegram_id"), msg)
 
+    log_staff_action("order_cancel", f"order #{order_id}")
     return jsonify({"order": order, "refund": refund, "balance": new_bal})
 
 
@@ -1347,9 +1372,11 @@ def api_ma_commande():
 
 from webapp import admin_gestion as _admin_gestion  # noqa: E402
 from webapp import admin_notifications as _admin_notifications  # noqa: E402
+from webapp import admin_staff as _admin_staff  # noqa: E402
 
 _admin_gestion.register(app)
 _admin_notifications.register(app)
+_admin_staff.register(app)
 
 
 def _warm_cache():

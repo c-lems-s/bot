@@ -10,11 +10,11 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from flask import g, jsonify, request
+from flask import jsonify, request
 
 from db.connection import get_cursor
-from kfc.config import is_admin
 from webapp import telegram as tg
+from webapp.access import require_full_admin
 from webapp.auth import require_telegram_user
 
 log = logging.getLogger(__name__)
@@ -154,10 +154,7 @@ _CRITERIA_BY_ID = {c["id"]: c for c in CRITERIA}
 
 
 def _require_admin():
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
-    return None
+    return require_full_admin()
 
 
 def _user_public(row: Dict[str, Any]) -> Dict[str, Any]:

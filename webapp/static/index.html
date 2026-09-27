@@ -260,6 +260,41 @@
       <div id="admin-paiement-user-box" class="info-card"></div>
     </section>
 
+    <!-- Staff (admin) -->
+    <section class="screen" id="screen-staff">
+      <h2 class="screen-title">Staff</h2>
+      <p class="info-note admin-only-hint">Droits paiement / commandes et journal d'actions.</p>
+
+      <h3 class="section-subtitle">Equipe</h3>
+      <div id="staff-list" class="queue-list"></div>
+      <div id="staff-empty" class="empty-hint" hidden>Aucun staff.</div>
+
+      <h3 class="section-subtitle">Ajouter / modifier</h3>
+      <div class="notif-search-row">
+        <input class="field-input" id="staff-user-q" type="search" placeholder="Rechercher un user…" autocomplete="off" />
+        <button class="secondary-btn notif-search-btn" id="staff-user-search" type="button">Chercher</button>
+      </div>
+      <div id="staff-user-pick" class="notif-user-list"></div>
+      <div id="staff-edit-box" class="gestion-form" hidden>
+        <p class="info-note" id="staff-edit-label">—</p>
+        <label class="field-label gestion-check-row">
+          <input type="checkbox" id="staff-can-paiements" />
+          Acces Paiement
+        </label>
+        <label class="field-label gestion-check-row">
+          <input type="checkbox" id="staff-can-commandes" />
+          Acces Commande
+        </label>
+        <button class="primary-btn" id="staff-save-btn" type="button">Enregistrer</button>
+        <button class="danger-btn" id="staff-remove-btn" type="button" hidden>Retirer le staff</button>
+        <button class="secondary-btn" id="staff-cancel-edit" type="button">Annuler</button>
+      </div>
+
+      <h3 class="section-subtitle">Journal</h3>
+      <button class="secondary-btn" id="staff-logs-refresh" type="button">Rafraichir le journal</button>
+      <div id="staff-logs" class="staff-logs"></div>
+    </section>
+
     <!-- Notification (admin) -->
     <section class="screen" id="screen-notification">
       <h2 class="screen-title">Notification</h2>
@@ -364,10 +399,11 @@
       <p class="admin-menu-title">Admin</p>
       <p class="admin-menu-hint">Choisissez une rubrique.</p>
       <div class="admin-menu-list">
-        <button type="button" class="admin-menu-item" data-admin-section="commande">Commande</button>
-        <button type="button" class="admin-menu-item" data-admin-section="paiement">Paiement</button>
-        <button type="button" class="admin-menu-item" data-admin-section="gestion">Gestion</button>
-        <button type="button" class="admin-menu-item" data-admin-section="notification">Notification</button>
+        <button type="button" class="admin-menu-item" data-admin-section="commande" data-admin-need="commandes">Commande</button>
+        <button type="button" class="admin-menu-item" data-admin-section="paiement" data-admin-need="paiements">Paiement</button>
+        <button type="button" class="admin-menu-item" data-admin-section="gestion" data-admin-need="gestion">Gestion</button>
+        <button type="button" class="admin-menu-item" data-admin-section="notification" data-admin-need="notification">Notification</button>
+        <button type="button" class="admin-menu-item" data-admin-section="staff" data-admin-need="staff">Staff</button>
       </div>
     </div>
   </div>

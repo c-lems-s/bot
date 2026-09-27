@@ -853,6 +853,19 @@ body.autoshop-locked #toast {
 #notif-send-btn { margin-top: 16px; }
 #notif-clear-users { margin-top: 0; margin-bottom: 8px; }
 
+.admin-menu-item[hidden] {
+  display: none !important;
+}
+.staff-logs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  max-height: 320px;
+  overflow: auto;
+}
+#staff-logs-refresh { margin-top: 0; }
+
 .gestion-resources {
   display: flex;
   flex-direction: column;

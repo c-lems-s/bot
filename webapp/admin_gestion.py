@@ -7,14 +7,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
-from flask import g, jsonify, request
+from flask import jsonify, request
 
 from db.connection import get_cursor
 from db.repositories import blacklist as blacklist_repo
 from db.repositories import config as config_repo
 from db.repositories import paiements as paiements_repo
 from db.repositories import users as users_repo
-from kfc.config import clear_cache, is_admin
+from kfc.config import clear_cache
+from webapp.access import require_full_admin
 from webapp.auth import require_telegram_user
 
 # Ressources exposees dans le panel (pas de SQL libre).
@@ -58,10 +59,7 @@ _CONFIG_PUBLIC_KEYS = (
 
 
 def _require_admin() -> Optional[Tuple[Any, int]]:
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
-    return None
+    return require_full_admin()
 
 
 def _config_public(row: Dict[str, Any]) -> Dict[str, Any]:

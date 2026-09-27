@@ -51,6 +51,9 @@ const state = {
   topupMontant: null,
   topupDemande: null,
   showAdmin: false,
+  isFullAdmin: false,
+  adminAccess: null,
+  staffEditUserId: null,
   hasMaCommande: false,
   adminOrderId: null,
   adminPaiementId: null,
@@ -711,17 +714,34 @@ document.querySelectorAll(".nav-item").forEach((n) => {
   };
 });
 
-function setAdminNav(showAdmin) {
+function setAdminNav(showAdmin, access, isFullAdmin) {
   state.showAdmin = !!showAdmin;
+  state.isFullAdmin = !!isFullAdmin;
+  state.adminAccess = access || null;
   const btn = $("nav-admin");
   if (btn) btn.hidden = !state.showAdmin;
   document.body.classList.toggle("is-admin", state.showAdmin);
+  applyAdminMenuPermissions();
   if (!state.showAdmin) {
     closeAdminMenu();
     setAdminBadge(0);
     return;
   }
   refreshAdminBadge();
+}
+
+function canAdminSection(need) {
+  if (!state.showAdmin) return false;
+  if (state.isFullAdmin) return true;
+  const a = state.adminAccess || {};
+  return !!a[need];
+}
+
+function applyAdminMenuPermissions() {
+  document.querySelectorAll("[data-admin-need]").forEach((btn) => {
+    const need = btn.getAttribute("data-admin-need");
+    btn.hidden = !canAdminSection(need);
+  });
 }
 
 function setAdminBadge(count) {
@@ -748,6 +768,7 @@ function refreshAdminBadge() {
 }
 
 function openAdminMenu() {
+  applyAdminMenuPermissions();
   const ov = $("admin-menu-overlay");
   if (ov) ov.hidden = false;
   refreshAdminBadge();
@@ -759,6 +780,18 @@ function closeAdminMenu() {
 }
 
 function openAdminSection(section) {
+  const needBySection = {
+    commande: "commandes",
+    paiement: "paiements",
+    gestion: "gestion",
+    notification: "notification",
+    staff: "staff",
+  };
+  const need = needBySection[section];
+  if (need && !canAdminSection(need)) {
+    toast("Permission insuffisante");
+    return;
+  }
   closeAdminMenu();
   setNav("admin");
   if (section === "commande") {
@@ -776,7 +809,215 @@ function openAdminSection(section) {
     showScreen("gestion");
   } else if (section === "notification") {
     openNotificationScreen();
+  } else if (section === "staff") {
+    openStaffScreen();
   }
+}
+
+function openStaffScreen() {
+  showScreen("staff");
+  state.staffEditUserId = null;
+  const box = $("staff-edit-box");
+  if (box) box.hidden = true;
+  loadStaffList();
+  loadStaffLogs();
+}
+
+function loadStaffList() {
+  const list = $("staff-list");
+  const empty = $("staff-empty");
+  if (!list || !empty) return;
+  list.innerHTML = "";
+  empty.hidden = false;
+  empty.textContent = "Chargement…";
+  api("/api/admin/staff")
+    .then((data) => {
+      const rows = data.staff || [];
+      list.innerHTML = "";
+      if (!rows.length) {
+        empty.textContent = "Aucun staff.";
+        empty.hidden = false;
+        return;
+      }
+      empty.hidden = true;
+      rows.forEach((s) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "queue-item queue-item-btn";
+        const name = s.firstName || (s.username ? "@" + s.username : String(s.telegramId));
+        const perms = [
+          s.canCommandes ? "Commande" : null,
+          s.canPaiements ? "Paiement" : null,
+        ]
+          .filter(Boolean)
+          .join(" + ");
+        btn.innerHTML = `
+          <div class="gestion-res-label">${escapeHtml(name)}</div>
+          <div class="c-opts">#${escapeHtml(String(s.userId))} · ${escapeHtml(perms || "—")}</div>`;
+        btn.onclick = () => openStaffEdit(s, { existing: true });
+        list.appendChild(btn);
+      });
+    })
+    .catch((e) => {
+      empty.textContent = e.message || "Erreur";
+      empty.hidden = false;
+    });
+}
+
+function openStaffEdit(s, { existing = false } = {}) {
+  state.staffEditUserId = s.userId || s.id;
+  const box = $("staff-edit-box");
+  const label = $("staff-edit-label");
+  const rem = $("staff-remove-btn");
+  if (box) box.hidden = false;
+  const name = s.firstName || (s.username ? "@" + s.username : String(s.telegramId || s.id));
+  if (label) label.textContent = `Staff : ${name} (#${state.staffEditUserId})`;
+  const cp = $("staff-can-paiements");
+  const cc = $("staff-can-commandes");
+  if (cp) cp.checked = !!s.canPaiements;
+  if (cc) cc.checked = !!s.canCommandes;
+  if (rem) rem.hidden = !existing;
+  loadStaffLogs();
+}
+
+function openStaffEditFromUser(u) {
+  if (u.isStaff) {
+    api("/api/admin/staff")
+      .then((data) => {
+        const found = (data.staff || []).find((s) => s.userId === u.id);
+        if (found) openStaffEdit(found, { existing: true });
+        else {
+          openStaffEdit(
+            {
+              userId: u.id,
+              telegramId: u.telegramId,
+              username: u.username,
+              firstName: u.firstName,
+              canPaiements: false,
+              canCommandes: true,
+            },
+            { existing: false }
+          );
+        }
+      })
+      .catch((e) => toast(e.message || "Erreur"));
+    return;
+  }
+  openStaffEdit(
+    {
+      userId: u.id,
+      telegramId: u.telegramId,
+      username: u.username,
+      firstName: u.firstName,
+      canPaiements: false,
+      canCommandes: true,
+    },
+    { existing: false }
+  );
+}
+
+async function searchStaffUsers() {
+  const q = (($("staff-user-q") || {}).value || "").trim();
+  const list = $("staff-user-pick");
+  if (!list) return;
+  list.innerHTML = `<p class="info-note">Chargement…</p>`;
+  try {
+    const data = await api(`/api/admin/staff/users?q=${encodeURIComponent(q)}`);
+    const users = data.users || [];
+    if (!users.length) {
+      list.innerHTML = `<p class="info-note">Aucun user.</p>`;
+      return;
+    }
+    list.innerHTML = "";
+    users.forEach((u) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "queue-item queue-item-btn";
+      const name = u.firstName || (u.username ? "@" + u.username : String(u.telegramId));
+      row.innerHTML = `
+        <div class="gestion-res-label">${escapeHtml(name)}${u.isStaff ? " · staff" : ""}</div>
+        <div class="c-opts">#${escapeHtml(String(u.id))} · ${escapeHtml(String(u.telegramId))}</div>`;
+      row.onclick = () => openStaffEditFromUser(u);
+      list.appendChild(row);
+    });
+  } catch (e) {
+    list.innerHTML = `<p class="info-note">${escapeHtml(e.message || "Erreur")}</p>`;
+  }
+}
+
+async function saveStaffMember() {
+  if (!state.staffEditUserId) {
+    toast("Choisissez un user");
+    return;
+  }
+  const canP = !!($("staff-can-paiements") || {}).checked;
+  const canC = !!($("staff-can-commandes") || {}).checked;
+  if (!canP && !canC) {
+    toast("Au moins une permission");
+    return;
+  }
+  const btn = $("staff-save-btn");
+  if (btn) btn.disabled = true;
+  try {
+    await api("/api/admin/staff", {
+      userId: state.staffEditUserId,
+      canPaiements: canP,
+      canCommandes: canC,
+    });
+    toast("Staff enregistre");
+    state.staffEditUserId = null;
+    const box = $("staff-edit-box");
+    if (box) box.hidden = true;
+    loadStaffList();
+    loadStaffLogs();
+  } catch (e) {
+    toast(e.message || "Erreur");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function removeStaffMember() {
+  if (!state.staffEditUserId) return;
+  if (!confirm("Retirer ce staff ?")) return;
+  try {
+    await api(`/api/admin/staff/${state.staffEditUserId}`, undefined, "DELETE");
+    toast("Staff retire");
+    state.staffEditUserId = null;
+    const box = $("staff-edit-box");
+    if (box) box.hidden = true;
+    loadStaffList();
+  } catch (e) {
+    toast(e.message || "Erreur");
+  }
+}
+
+function loadStaffLogs() {
+  const box = $("staff-logs");
+  if (!box) return;
+  box.innerHTML = `<p class="info-note">Chargement…</p>`;
+  const q = state.staffEditUserId ? `?userId=${state.staffEditUserId}` : "";
+  api(`/api/admin/staff/logs${q}`)
+    .then((data) => {
+      const logs = data.logs || [];
+      if (!logs.length) {
+        box.innerHTML = `<p class="info-note">Aucune action.</p>`;
+        return;
+      }
+      box.innerHTML = "";
+      logs.forEach((l) => {
+        const row = document.createElement("div");
+        row.className = "queue-item";
+        const who = l.firstName || (l.username ? "@" + l.username : String(l.telegramId || l.staffUserId));
+        row.innerHTML = `
+          <div class="gestion-res-label">${escapeHtml(l.action)} · ${escapeHtml(who)}</div>
+          <div class="c-opts">${escapeHtml(l.detail || "")} · ${escapeHtml(l.createdAt || "")}</div>`;
+        box.appendChild(row);
+      });
+    })
+    .catch((e) => {
+      box.innerHTML = `<p class="info-note">${escapeHtml(e.message || "Erreur")}</p>`;
+    });
 }
 
 function openNotificationScreen() {
@@ -1899,6 +2140,30 @@ function renderWallet() {
   }
   const notifSend = $("notif-send-btn");
   if (notifSend) notifSend.onclick = () => sendAdminNotification();
+
+  const staffSearch = $("staff-user-search");
+  if (staffSearch) staffSearch.onclick = () => searchStaffUsers();
+  const staffQ = $("staff-user-q");
+  if (staffQ) {
+    staffQ.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") searchStaffUsers();
+    });
+  }
+  const staffSave = $("staff-save-btn");
+  if (staffSave) staffSave.onclick = () => saveStaffMember();
+  const staffRemove = $("staff-remove-btn");
+  if (staffRemove) staffRemove.onclick = () => removeStaffMember();
+  const staffCancel = $("staff-cancel-edit");
+  if (staffCancel) {
+    staffCancel.onclick = () => {
+      state.staffEditUserId = null;
+      const box = $("staff-edit-box");
+      if (box) box.hidden = true;
+      loadStaffLogs();
+    };
+  }
+  const staffLogs = $("staff-logs-refresh");
+  if (staffLogs) staffLogs.onclick = () => loadStaffLogs();
 })();
 
 /* ---------- Gestion (admin) ---------- */
@@ -2435,7 +2700,7 @@ function renderHistory() {
   try {
     const me = await api("/api/me");
     setBalance(me.balance != null ? me.balance : 0, me.currency || "EUR");
-    setAdminNav(!!me.showAdmin);
+    setAdminNav(!!me.showAdmin, me.adminAccess, !!me.isFullAdmin);
     setMaCommandeNav(!!me.hasMaCommande);
     if (me.pointsLimit != null) state.pointsLimit = me.pointsLimit;
     if (me.shopOpen === false) {
