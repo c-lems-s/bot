@@ -716,12 +716,41 @@ function setAdminNav(showAdmin) {
   const btn = $("nav-admin");
   if (btn) btn.hidden = !state.showAdmin;
   document.body.classList.toggle("is-admin", state.showAdmin);
-  if (!state.showAdmin) closeAdminMenu();
+  if (!state.showAdmin) {
+    closeAdminMenu();
+    setAdminBadge(0);
+    return;
+  }
+  refreshAdminBadge();
+}
+
+function setAdminBadge(count) {
+  const badge = $("nav-admin-badge");
+  if (!badge) return;
+  const n = Math.max(0, parseInt(count, 10) || 0);
+  if (n <= 0) {
+    badge.hidden = true;
+    badge.textContent = "0";
+    return;
+  }
+  badge.hidden = false;
+  badge.textContent = n > 99 ? "99+" : String(n);
+}
+
+function refreshAdminBadge() {
+  if (!state.showAdmin) {
+    setAdminBadge(0);
+    return;
+  }
+  api("/api/admin/pending-count")
+    .then((data) => setAdminBadge(data.count || 0))
+    .catch(() => {});
 }
 
 function openAdminMenu() {
   const ov = $("admin-menu-overlay");
   if (ov) ov.hidden = false;
+  refreshAdminBadge();
 }
 
 function closeAdminMenu() {
@@ -1119,6 +1148,7 @@ async function adminCompleteOrder() {
     renderAdminOrders();
     showScreen("commande");
     setNav("admin");
+    refreshAdminBadge();
   } catch (e) {
     toast(e.message || "Echec");
   } finally {

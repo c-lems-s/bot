@@ -626,7 +626,17 @@ def api_wallet_topup_finalize(demande_id: int):
     if not updated or updated.get("status") != "PENDING":
         return jsonify({"error": "Finalisation impossible"}), 409
 
-    # File admin dans la mini-app (rubrique Paiement) — plus de message Telegram.
+    try:
+        from webapp.bot_notify import notify_admin_new_payment, notify_user
+
+        notify_admin_new_payment()
+        notify_user(
+            user.get("telegram_id"),
+            "Votre demande de paiement a ete envoyee. Elle sera traitee sous peu.",
+        )
+    except Exception:
+        app.logger.exception("Notif paiement finalize %s", demande_id)
+
     return jsonify({"demande": updated})
 
 
@@ -997,6 +1007,20 @@ def api_checkout():
 
     session_store.clear_menu_cache(sess["id"])
 
+    try:
+        from webapp.bot_notify import notify_admin_new_order, notify_user
+
+        notify_admin_new_order()
+        notify_user(
+            user.get("telegram_id"),
+            (
+                f"Commande enregistree (n° {order_number}). "
+                "Elle est en cours de traitement."
+            ),
+        )
+    except Exception:
+        app.logger.exception("Notif checkout %s", order_number)
+
     return jsonify(
         {
             "orderNumber": order_number,
@@ -1223,6 +1247,18 @@ def api_admin_order_user(order_id: int):
     )
 
 
+@app.route("/api/admin/pending-count")
+@require_telegram_user
+def api_admin_pending_count():
+    """Nombre de commandes + paiements non traites (badge Admin)."""
+    user = g.user
+    if not is_admin(user.get("telegram_id")):
+        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    from webapp.bot_notify import pending_counts
+
+    return jsonify(pending_counts())
+
+
 @app.route("/api/admin/orders/<int:order_id>/complete", methods=["POST"])
 @require_telegram_user
 def api_admin_order_complete(order_id: int):
@@ -1230,7 +1266,7 @@ def api_admin_order_complete(order_id: int):
     if not is_admin(user.get("telegram_id")):
         return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
     from db.repositories import orders as orders_repo
-    from webapp import telegram as tg
+    from webapp.bot_notify import notify_user
 
     data = request.json or {}
     order = orders_repo.complete_order(
@@ -1244,11 +1280,10 @@ def api_admin_order_complete(order_id: int):
         return jsonify({"error": "Commande introuvable ou deja terminee"}), 409
 
     client = users_repo.get_by_id(int(order["userId"])) if order.get("userId") else None
-    if client and client.get("telegram_id"):
-        tg.send_message(
-            int(client["telegram_id"]),
-            "Votre commande est terminee, rendez vous dans « Ma commande » pour consulter.",
-            parse_mode=None,
+    if client:
+        notify_user(
+            client.get("telegram_id"),
+            "Votre commande a ete acceptee. Consultez « Ma commande » pour le detail.",
         )
     return jsonify({"order": order})
 
@@ -1260,7 +1295,7 @@ def api_admin_order_cancel(order_id: int):
     if not is_admin(user.get("telegram_id")):
         return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
     from db.repositories import orders as orders_repo
-    from webapp import telegram as tg
+    from webapp.bot_notify import notify_user
 
     data = request.json or {}
     expl = str(data.get("explication") or "").strip()
@@ -1284,7 +1319,7 @@ def api_admin_order_cancel(order_id: int):
         new_bal = users_repo.credit(int(order["userId"]), refund)
 
     client = users_repo.get_by_id(int(order["userId"])) if order.get("userId") else None
-    if client and client.get("telegram_id"):
+    if client:
         msg = (
             "Votre commande a ete annulee.\n"
             f"Motif : {expl}\n"
@@ -1294,7 +1329,7 @@ def api_admin_order_cancel(order_id: int):
             if new_bal is not None:
                 msg += f"\nNouveau solde : {new_bal:.2f} {get_currency()}."
         msg += "\nConsultez « Ma commande » pour le detail."
-        tg.send_message(int(client["telegram_id"]), msg, parse_mode=None)
+        notify_user(client.get("telegram_id"), msg)
 
     return jsonify({"order": order, "refund": refund, "balance": new_bal})
 
