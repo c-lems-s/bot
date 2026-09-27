@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
+from db.connection import get_cursor
 from db.repositories import staff as staff_repo
 from db.repositories import users as users_repo
 from kfc.config import get_admin, is_admin
@@ -45,42 +46,6 @@ def register(app) -> None:
             return jsonify({"error": str(e)}), 400
         return jsonify({"staff": row}), 201
 
-    @app.route("/api/admin/staff/<int:user_id>", methods=["PATCH", "DELETE"])
-    @require_telegram_user
-    def api_staff_one(user_id: int):
-        denied = require_full_admin()
-        if denied:
-            return denied
-        if request.method == "DELETE":
-            ok = staff_repo.remove(user_id)
-            if not ok:
-                return jsonify({"error": "staff introuvable"}), 404
-            return jsonify({"ok": True})
-
-        data = request.json or {}
-        existing = staff_repo.get_by_user_id(user_id)
-        if not existing:
-            return jsonify({"error": "staff introuvable"}), 404
-        can_p = (
-            bool(data.get("canPaiements"))
-            if "canPaiements" in data
-            else existing["canPaiements"]
-        )
-        can_c = (
-            bool(data.get("canCommandes"))
-            if "canCommandes" in data
-            else existing["canCommandes"]
-        )
-        if not can_p and not can_c:
-            return jsonify({"error": "Au moins une permission requise"}), 400
-        try:
-            row = staff_repo.upsert(
-                user_id, can_paiements=can_p, can_commandes=can_c
-            )
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
-        return jsonify({"staff": row})
-
     @app.route("/api/admin/staff/logs")
     @require_telegram_user
     def api_staff_logs():
@@ -115,7 +80,6 @@ def register(app) -> None:
         except (TypeError, ValueError):
             limit = 40
         admin_tid = get_admin()
-        from db.connection import get_cursor
 
         with get_cursor() as cur:
             if q:
@@ -165,3 +129,39 @@ def register(app) -> None:
                 for r in cur.fetchall() or []
             ]
         return jsonify({"users": users})
+
+    @app.route("/api/admin/staff/<int:user_id>", methods=["PATCH", "DELETE"])
+    @require_telegram_user
+    def api_staff_one(user_id: int):
+        denied = require_full_admin()
+        if denied:
+            return denied
+        if request.method == "DELETE":
+            ok = staff_repo.remove(user_id)
+            if not ok:
+                return jsonify({"error": "staff introuvable"}), 404
+            return jsonify({"ok": True})
+
+        data = request.json or {}
+        existing = staff_repo.get_by_user_id(user_id)
+        if not existing:
+            return jsonify({"error": "staff introuvable"}), 404
+        can_p = (
+            bool(data.get("canPaiements"))
+            if "canPaiements" in data
+            else existing["canPaiements"]
+        )
+        can_c = (
+            bool(data.get("canCommandes"))
+            if "canCommandes" in data
+            else existing["canCommandes"]
+        )
+        if not can_p and not can_c:
+            return jsonify({"error": "Au moins une permission requise"}), 400
+        try:
+            row = staff_repo.upsert(
+                user_id, can_paiements=can_p, can_commandes=can_c
+            )
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"staff": row})
