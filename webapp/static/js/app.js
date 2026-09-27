@@ -1,4 +1,4 @@
-/* Mini-app KFC — Telegram WebApp multi-user (compte KFC partage cote serveur). */
+/* Mini-app KFC — Telegram WebApp multi-user. */
 
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) {
@@ -104,7 +104,7 @@ function refreshMenuLimits() {
     updatePointsLimitBanner();
     return;
   }
-  renderMenu(state.categories, state.connected);
+  renderMenu(state.categories);
 }
 
 /* ---------- Navigation entre écrans ---------- */
@@ -236,8 +236,7 @@ async function selectStore(s) {
     const data = await api("/api/select-store", { storeId: s.id, name: s.name, city: s.city });
     state.menuLoaded = true;
     state.categories = data.categories;
-    state.connected = data.connected;
-    renderMenu(data.categories, data.connected);
+    renderMenu(data.categories);
     refreshCart();
   } catch (e) {
     if (isAutoshopUnavailableError(e)) {
@@ -257,7 +256,7 @@ async function selectStore(s) {
   }
 }
 
-function renderMenu(categories, connected) {
+function renderMenu(categories) {
   const c = $("menu-container");
   c.innerHTML = "";
   if (!categories.length) {
@@ -635,12 +634,6 @@ function renderConfirm(data) {
 }
 
 /* ---------- Utilitaires ---------- */
-function formatTotal(total) {
-  if (total == null) return "—";
-  if (typeof total === "number") return total.toFixed(2) + " €";
-  return String(total);
-}
-
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, "&amp;")
@@ -666,7 +659,6 @@ $("points-limit-overlay").onclick = (e) => {
 function backToSearch() {
   state.menuLoaded = false;
   state.categories = [];
-  state.connected = undefined;
   state.points = 0;
   const badge = $("cart-badge");
   if (badge) badge.hidden = true;
@@ -1017,10 +1009,6 @@ function parseTopupMontantRaw(raw) {
   const cents = Math.round(v * 100);
   if (Math.abs(v * 100 - cents) > 1e-9) return { ok: false, value: v };
   return { ok: true, value: cents / 100 };
-}
-
-function topupMontantValue() {
-  return parseTopupMontantRaw(($("topup-montant") || {}).value).value;
 }
 
 function validateTopupMontantLive() {

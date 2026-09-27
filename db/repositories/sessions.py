@@ -44,26 +44,12 @@ def get_open(user_id: int) -> Optional[Dict[str, Any]]:
     return get_draft(user_id)
 
 
-def get_by_id(session_id: int, user_id: int) -> Optional[Dict[str, Any]]:
-    with get_cursor() as cur:
-        cur.execute(
-            """
-            SELECT * FROM sessions
-            WHERE id = %s AND user_id = %s
-            """,
-            (int(session_id), int(user_id)),
-        )
-        row = cur.fetchone()
-        return _row_to_session(row) if row else None
-
-
 def create_draft(
     user_id: int,
     *,
     store_id: str,
     store_name: str = "",
     store_city: str = "",
-    basket_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Ferme d'anciens DRAFT du user puis cree une nouvelle session DRAFT."""
     with get_cursor() as cur:
@@ -79,9 +65,9 @@ def create_draft(
             """
             INSERT INTO sessions (
                 user_id, status, store_id, store_name, store_city,
-                basket_id, cart_json, last_order_json, updated_at
+                cart_json, last_order_json, updated_at
             )
-            VALUES (%s, 'DRAFT', %s, %s, %s, %s, '[]'::jsonb, NULL, NOW())
+            VALUES (%s, 'DRAFT', %s, %s, %s, '[]'::jsonb, NULL, NOW())
             RETURNING *
             """,
             (
@@ -89,7 +75,6 @@ def create_draft(
                 store_id,
                 store_name or "",
                 store_city or "",
-                basket_id,
             ),
         )
         return _row_to_session(cur.fetchone())
@@ -103,10 +88,8 @@ def save(
     store_id: Optional[str] = None,
     store_name: Optional[str] = None,
     store_city: Optional[str] = None,
-    basket_id: Optional[str] = None,
     cart: Optional[List[Dict[str, Any]]] = None,
     last_order: Optional[Dict[str, Any]] = None,
-    clear_basket: bool = False,
     clear_last_order: bool = False,
 ) -> Optional[Dict[str, Any]]:
     sets = ["updated_at = NOW()"]
@@ -124,11 +107,6 @@ def save(
     if store_city is not None:
         sets.append("store_city = %s")
         params.append(store_city)
-    if clear_basket:
-        sets.append("basket_id = NULL")
-    elif basket_id is not None:
-        sets.append("basket_id = %s")
-        params.append(basket_id)
     if cart is not None:
         sets.append("cart_json = %s::jsonb")
         params.append(json.dumps(cart, ensure_ascii=False))

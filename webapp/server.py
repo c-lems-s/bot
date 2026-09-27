@@ -103,11 +103,6 @@ POINTS_LIMIT = 2500
 SOON_LABEL = "Bientôt disponible"
 
 
-def _account_configured():
-    """Legacy : plus requis pour le flux panier local."""
-    return True
-
-
 def _build_store_menu(store_menu, session_id: int):
     """Menu resto KFC croise avec table article (prix/label/cost)."""
     menu_items = {}
@@ -268,7 +263,6 @@ def _order_payload(sess):
     return {
         "storeId": sess.get("store_id"),
         "storeName": sess.get("store_name"),
-        "basketId": None,
         "channel": "Web",
         "device": "Desktop",
         "disposition": "pickup",
@@ -304,7 +298,6 @@ def api_config():
     ma = orders_repo.get_ma_commande(user["id"])
 
     payload = {
-        "configured": _account_configured(),
         "balance": balance,
         "currency": get_currency(),
         "reduction": get_reduction(),
@@ -615,7 +608,6 @@ def api_select_store():
         store_id=str(storeId),
         store_name=name,
         store_city=city,
-        basket_id=None,
     )
     categories = _build_store_menu(store_menu, sess["id"])
 
@@ -623,9 +615,6 @@ def api_select_store():
         {
             "store": {"name": name, "city": city, "id": storeId},
             "categories": categories,
-            "connected": False,
-            "liveOrdering": False,
-            "matchedItems": None,
             "available": True,
             "sessionId": sess["id"],
             "reduction": get_reduction(),
@@ -735,7 +724,6 @@ def api_add_item():
     cart.append(
         {
             "uid": uuid.uuid4().hex,
-            "kfcItemId": None,
             "itemId": str(it["id"]),
             "name": it["name"],
             "image": it.get("image", ""),
@@ -763,7 +751,6 @@ def api_add_item():
             "limit": POINTS_LIMIT,
             "total": session_store.cart_total_eur(cart),
             "currency": get_currency(),
-            "liveOrdering": False,
         }
     )
 
@@ -927,7 +914,6 @@ def api_checkout():
             "uuid": order_uuid,
             "points": points_total,
             "total": total_eur,
-            "confirmationUrl": None,
             "status": "QUEUED",
             "payload": snapshot,
         }
@@ -937,7 +923,6 @@ def api_checkout():
             status="CONFIRMED",
             cart=[],
             last_order=last_order,
-            clear_basket=True,
         )
     except Exception:
         try:
@@ -956,36 +941,10 @@ def api_checkout():
             "total": total_eur,
             "balance": new_balance,
             "currency": get_currency(),
-            "confirmationUrl": None,
             "status": "QUEUED",
             "order": snapshot,
         }
     )
-
-
-@app.route("/api/order-payload")
-@require_telegram_user
-def api_order_payload():
-    user = g.user
-    sess = session_store.require_open_session(user["id"])
-    if not sess:
-        return jsonify({})
-    last = sess.get("last_order")
-    payload = _order_payload(sess)
-    if last:
-        return jsonify({**payload, "lastOrder": last})
-    return jsonify(payload)
-
-
-@app.route("/api/checkin", methods=["POST"])
-@require_telegram_user
-def api_checkin():
-    return jsonify(
-        {
-            "error": "Check-in KFC desactive — les commandes sont locales uniquement.",
-            "code": "CHECKIN_DISABLED",
-        }
-    ), 410
 
 
 @app.route("/api/history")

@@ -51,7 +51,6 @@ def load_config(*, force: bool = False) -> Dict[str, Any]:
         reduction = 100.0
 
     _CACHE = {
-        "balance": float(row.get("balance") if row.get("balance") is not None else 0.98),
         "currency": row.get("currency") or "EUR",
         "reduction": max(0.0, min(100.0, reduction)),
         "version": str(row.get("version") or "1"),

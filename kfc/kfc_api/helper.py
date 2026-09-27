@@ -6,7 +6,6 @@ def HTTPGet(
     url: str,
     headers: Optional[Dict[str, str]] = None,
     params: Optional[Dict[str, Any]] = None,
-    cookies: Optional[Dict[str, str]] = None,
     timeout: int = 10,
 ) -> Tuple[Optional[Any], Optional[Any]]:
     try:
@@ -14,7 +13,6 @@ def HTTPGet(
             url=url,
             headers=headers,
             params=params,
-            cookies=cookies,
             timeout=timeout,
         )
         if not response.ok:
