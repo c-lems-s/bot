@@ -647,6 +647,7 @@ body.autoshop-locked #app,
 body.autoshop-locked .bottom-nav,
 body.autoshop-locked .modal-overlay,
 body.autoshop-locked .points-limit-overlay,
+body.autoshop-locked #admin-menu-overlay,
 body.autoshop-locked #toast {
   display: none !important;
   pointer-events: none !important;
@@ -732,12 +733,35 @@ body.autoshop-locked #toast {
   display: none !important;
 }
 
-body.is-admin .nav-item {
-  font-size: 10px;
+.admin-menu-panel .admin-menu-title {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 800;
 }
-body.is-admin .nav-item .nav-ic svg {
-  width: 20px;
-  height: 20px;
+.admin-menu-panel .admin-menu-hint {
+  margin: 0 0 16px;
+  color: #666;
+  font-size: 14px;
+}
+.admin-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.admin-menu-item {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid #e5e5e5;
+  border-radius: 14px;
+  background: #f7f7f7;
+  color: #222;
+  font-size: 16px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+.admin-menu-item:active {
+  background: #eee;
 }
 
 .gestion-resources {

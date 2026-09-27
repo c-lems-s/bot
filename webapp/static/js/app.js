@@ -652,6 +652,17 @@ $("points-limit-close").onclick = closePointsLimitOverlay;
 $("points-limit-overlay").onclick = (e) => {
   if (e.target === $("points-limit-overlay")) closePointsLimitOverlay();
 };
+const adminMenuClose = $("admin-menu-close");
+if (adminMenuClose) adminMenuClose.onclick = () => closeAdminMenu();
+const adminMenuOverlay = $("admin-menu-overlay");
+if (adminMenuOverlay) {
+  adminMenuOverlay.onclick = (e) => {
+    if (e.target === adminMenuOverlay) closeAdminMenu();
+  };
+}
+document.querySelectorAll("[data-admin-section]").forEach((btn) => {
+  btn.onclick = () => openAdminSection(btn.getAttribute("data-admin-section"));
+});
 
 /* Retour à la recherche pour choisir un autre restaurant. */
 function backToSearch() {
@@ -671,6 +682,12 @@ function backToSearch() {
 document.querySelectorAll(".nav-item").forEach((n) => {
   n.onclick = () => {
     const nav = n.dataset.nav;
+    if (nav === "admin") {
+      setNav("admin");
+      openAdminMenu();
+      return;
+    }
+    closeAdminMenu();
     setNav(nav);
     if (nav === "boutique") {
       showScreen(state.menuLoaded ? "menu" : "search");
@@ -685,29 +702,45 @@ document.querySelectorAll(".nav-item").forEach((n) => {
       showScreen("ma-commande");
     } else if (nav === "sav") {
       showScreen("sav");
-    } else if (nav === "commande") {
-      // Affichage seul : le backend renvoie 403 si non-admin.
-      renderAdminOrders();
-      showScreen("commande");
-    } else if (nav === "paiement") {
-      state.adminPaiementId = null;
-      renderAdminPaiements();
-      showScreen("paiement");
-    } else if (nav === "gestion") {
-      state.gestionResource = null;
-      renderGestionHub();
-      showScreen("gestion");
     }
   };
 });
 
 function setAdminNav(showAdmin) {
   state.showAdmin = !!showAdmin;
-  ["nav-commande", "nav-paiement", "nav-gestion"].forEach((id) => {
-    const btn = $(id);
-    if (btn) btn.hidden = !state.showAdmin;
-  });
+  const btn = $("nav-admin");
+  if (btn) btn.hidden = !state.showAdmin;
   document.body.classList.toggle("is-admin", state.showAdmin);
+  if (!state.showAdmin) closeAdminMenu();
+}
+
+function openAdminMenu() {
+  const ov = $("admin-menu-overlay");
+  if (ov) ov.hidden = false;
+}
+
+function closeAdminMenu() {
+  const ov = $("admin-menu-overlay");
+  if (ov) ov.hidden = true;
+}
+
+function openAdminSection(section) {
+  closeAdminMenu();
+  setNav("admin");
+  if (section === "commande") {
+    state.adminOrderId = null;
+    renderAdminOrders();
+    showScreen("commande");
+  } else if (section === "paiement") {
+    state.adminPaiementId = null;
+    revokePreuveObjectUrls();
+    renderAdminPaiements();
+    showScreen("paiement");
+  } else if (section === "gestion") {
+    state.gestionResource = null;
+    renderGestionHub();
+    showScreen("gestion");
+  }
 }
 
 function setMaCommandeNav(visible) {
@@ -825,7 +858,7 @@ async function adminCompleteOrder() {
     state.adminOrderId = null;
     renderAdminOrders();
     showScreen("commande");
-    setNav("commande");
+    setNav("admin");
   } catch (e) {
     toast(e.message || "Echec");
   } finally {
@@ -994,7 +1027,7 @@ async function adminAcceptPaiement() {
     revokePreuveObjectUrls();
     renderAdminPaiements();
     showScreen("paiement");
-    setNav("paiement");
+    setNav("admin");
   } catch (e) {
     toast(e.message || "Echec");
   } finally {
@@ -1014,7 +1047,7 @@ async function adminRejectPaiement() {
     revokePreuveObjectUrls();
     renderAdminPaiements();
     showScreen("paiement");
-    setNav("paiement");
+    setNav("admin");
   } catch (e) {
     toast(e.message || "Echec");
   } finally {
@@ -1037,7 +1070,7 @@ async function adminCancelOrder() {
     state.adminOrderId = null;
     renderAdminOrders();
     showScreen("commande");
-    setNav("commande");
+    setNav("admin");
   } catch (e) {
     toast(e.message || "Echec annulation");
   } finally {
@@ -1492,7 +1525,7 @@ function renderWallet() {
       state.adminOrderId = null;
       renderAdminOrders();
       showScreen("commande");
-      setNav("commande");
+      setNav("admin");
     };
   }
   const userInfoBtn = $("admin-user-info-btn");
@@ -1529,7 +1562,7 @@ function renderWallet() {
       revokePreuveObjectUrls();
       renderAdminPaiements();
       showScreen("paiement");
-      setNav("paiement");
+      setNav("admin");
     };
   }
   const payUserBtn = $("admin-paiement-user-btn");
@@ -1549,7 +1582,7 @@ function renderWallet() {
       state.gestionResource = null;
       renderGestionHub();
       showScreen("gestion");
-      setNav("gestion");
+      setNav("admin");
     };
   }
 })();
@@ -1624,7 +1657,7 @@ function openGestionResource(res) {
     empty.textContent = "Chargement…";
   }
   showScreen("gestion-resource");
-  setNav("gestion");
+  setNav("admin");
 
   const loaders = {
     config: loadGestionConfig,

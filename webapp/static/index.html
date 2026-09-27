@@ -325,6 +325,22 @@
     </div>
   </div>
 
+  <!-- Menu admin — notif plein ecran -->
+  <div class="points-limit-overlay" id="admin-menu-overlay" hidden>
+    <button class="points-limit-close" id="admin-menu-close" aria-label="Fermer" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div class="points-limit-panel admin-menu-panel">
+      <p class="admin-menu-title">Admin</p>
+      <p class="admin-menu-hint">Choisissez une rubrique.</p>
+      <div class="admin-menu-list">
+        <button type="button" class="admin-menu-item" data-admin-section="commande">Commande</button>
+        <button type="button" class="admin-menu-item" data-admin-section="paiement">Paiement</button>
+        <button type="button" class="admin-menu-item" data-admin-section="gestion">Gestion</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div id="toast" class="toast" hidden></div>
 
@@ -367,23 +383,11 @@
       </span>
       <span>SAV</span>
     </button>
-    <button class="nav-item nav-admin-only" data-nav="commande" id="nav-commande" hidden>
+    <button class="nav-item nav-admin-only" data-nav="admin" id="nav-admin" hidden>
       <span class="nav-ic">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 5-3 8-7 9-4-1-7-4-7-9V7l7-4z"/><path d="M9.5 12l1.5 1.5L14.5 10"/></svg>
       </span>
-      <span>Commande</span>
-    </button>
-    <button class="nav-item nav-admin-only" data-nav="paiement" id="nav-paiement" hidden>
-      <span class="nav-ic">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
-      </span>
-      <span>Paiement</span>
-    </button>
-    <button class="nav-item nav-admin-only" data-nav="gestion" id="nav-gestion" hidden>
-      <span class="nav-ic">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
-      </span>
-      <span>Gestion</span>
+      <span>Admin</span>
     </button>
   </nav>
 
