@@ -56,6 +56,26 @@ ALLOWED_PREUVE_MIME = {
 }
 MAX_PREUVE_BYTES = 8 * 1024 * 1024
 MAX_PREUVES_PAR_DEMANDE = 10
+MAX_DRAFT_TOPUPS = 3
+
+
+def _sniff_preuve_type(raw: bytes):
+    """Detecte le type reel du fichier (magic bytes). Ignore le MIME client."""
+    if raw.startswith(b"%PDF"):
+        return ".pdf", "application/pdf"
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png", "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return ".jpg", "image/jpeg"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return ".webp", "image/webp"
+    # HEIC/HEIF (ftyp....heic/heif/mif1)
+    if len(raw) >= 12 and raw[4:8] == b"ftyp":
+        brand = raw[8:12]
+        if brand in (b"heic", b"heif", b"mif1", b"msf1"):
+            return ".heic", "image/heic"
+    return None
+
 
 app = Flask(__name__, static_folder=None)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
@@ -108,12 +128,13 @@ def _unit_price_from_catalog(art: dict) -> float:
     return apply_reduction(original, get_reduction())
 
 
-def _reprice_cart(cart: list) -> list:
-    """Recalcule prix/points depuis le catalogue — ignore toute valeur client/session."""
+def _reprice_cart(cart: list, session_id: int | None = None) -> list:
+    """Recalcule prix/points depuis le catalogue (+ menu session pour les pts)."""
     if not cart:
         return []
     ids = [str(e.get("itemId") or "") for e in cart if e.get("itemId")]
     catalog = articles_repo.get_by_kfc_ids(ids)
+    menu = session_store.get_menu_items(session_id) if session_id else {}
     priced = []
     for e in cart:
         item_id = str(e.get("itemId") or "")
@@ -128,10 +149,16 @@ def _reprice_cart(cart: list) -> list:
             qty = 1
         qty = max(1, qty)
         cost = art.get("cost")
+        if cost is None and menu.get(item_id):
+            cost = menu[item_id].get("cost")
         try:
             cost = int(cost) if cost is not None else None
         except (TypeError, ValueError):
             cost = None
+        if cost is None:
+            raise ValueError(
+                f"Article sans points catalogue : {e.get('name') or item_id}"
+            )
         entry = dict(e)
         entry["itemId"] = item_id
         entry["price"] = _unit_price_from_catalog(art)
@@ -447,6 +474,18 @@ def api_wallet_topup_start():
     except (TypeError, ValueError):
         return jsonify({"error": "moyenId invalide"}), 400
 
+    open_n = paiements_repo.count_open_demandes(user["id"])
+    if open_n >= MAX_DRAFT_TOPUPS:
+        return jsonify(
+            {
+                "error": (
+                    f"Trop de demandes en cours (max {MAX_DRAFT_TOPUPS}). "
+                    "Finalisez ou attendez le traitement admin."
+                ),
+                "code": "TOPUP_LIMIT",
+            }
+        ), 409
+
     dem = paiements_repo.create_demande(user["id"], moyen_id)
     if not dem:
         return jsonify({"error": "Moyen de paiement introuvable"}), 404
@@ -494,12 +533,6 @@ def api_wallet_topup_preuve(demande_id: int):
 
     added = []
     for f in files[:remaining]:
-        mime = (f.mimetype or "").lower().strip()
-        if mime and mime not in ALLOWED_PREUVE_MIME:
-            return jsonify(
-                {"error": f"Type de fichier non autorise : {mime or 'inconnu'}"}
-            ), 400
-
         raw = f.read(MAX_PREUVE_BYTES + 1)
         if len(raw) > MAX_PREUVE_BYTES:
             return jsonify(
@@ -508,29 +541,26 @@ def api_wallet_topup_preuve(demande_id: int):
         if not raw:
             continue
 
-        ext = os.path.splitext(f.filename or "")[1].lower()
-        if ext not in (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".pdf"):
-            if mime == "image/png":
-                ext = ".png"
-            elif mime in ("image/jpeg", "image/jpg"):
-                ext = ".jpg"
-            elif mime == "image/webp":
-                ext = ".webp"
-            elif mime == "application/pdf":
-                ext = ".pdf"
-            else:
-                ext = ".bin"
+        sniffed = _sniff_preuve_type(raw)
+        if not sniffed:
+            return jsonify(
+                {"error": "Type de fichier non autorise (contenu invalide)."}
+            ), 400
+        ext, mime = sniffed
 
         stored = f"{uuid.uuid4().hex}{ext}"
         path = os.path.join(dest_dir, stored)
         with open(path, "wb") as out:
             out.write(raw)
 
+        safe_name = os.path.basename(f.filename or stored)
+        safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._-")[:80] or stored
+
         row = paiements_repo.add_preuve(
             demande_id,
             user["id"],
-            filename=os.path.basename(f.filename or stored),
-            mime=mime or None,
+            filename=safe_name,
+            mime=mime,
             stored_name=stored,
         )
         if row:
@@ -621,12 +651,13 @@ def api_wallet_topup_finalize(demande_id: int):
 
 @app.route("/telegram/webhook", methods=["POST"])
 def telegram_webhook():
-    """Webhook Bot API (si TELEGRAM_WEBHOOK=1). Sinon utiliser le poll."""
+    """Webhook Bot API — secret obligatoire (anti-forgery admin callbacks)."""
     secret = (os.environ.get("TELEGRAM_WEBHOOK_SECRET") or "").strip()
-    if secret:
-        got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if got != secret:
-            return jsonify({"error": "forbidden"}), 403
+    if not secret:
+        return jsonify({"error": "webhook disabled (TELEGRAM_WEBHOOK_SECRET manquant)"}), 503
+    got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not got or got != secret:
+        return jsonify({"error": "forbidden"}), 403
     update = request.get_json(silent=True) or {}
     try:
         from webapp.bot_poll import process_update
@@ -643,6 +674,8 @@ def api_search():
     query = (request.json or {}).get("query", "").strip()
     if not query:
         return jsonify({"stores": []})
+    if len(query) > 80:
+        return jsonify({"error": "Recherche trop longue (max 80 caracteres)."}), 400
 
     allStores = stores.GetAllStores()
     if allStores is None:
@@ -795,14 +828,17 @@ def api_add_item():
     except (TypeError, ValueError):
         cost = None
 
+    if cost is None:
+        return jsonify({"error": "Article sans points catalogue — non commandable."}), 403
+
     cart = list(sess.get("cart") or [])
     try:
-        cart = _reprice_cart(cart)
+        cart = _reprice_cart(cart, session_id=sess["id"])
     except ValueError as e:
         return jsonify({"error": str(e)}), 409
     points_now = session_store.cart_points(cart)
 
-    if cost is not None and (points_now + cost) > POINTS_LIMIT:
+    if (points_now + cost) > POINTS_LIMIT:
         return jsonify(
             {
                 "error": f"Limite de {POINTS_LIMIT} points depassee "
@@ -849,7 +885,7 @@ def api_basket():
     sess = session_store.require_open_session(user["id"])
     cart = (sess or {}).get("cart") or []
     try:
-        cart = _reprice_cart(cart)
+        cart = _reprice_cart(cart, session_id=sess["id"] if sess else None)
     except ValueError as e:
         return jsonify({"error": str(e)}), 409
     if sess:
@@ -879,7 +915,7 @@ def api_remove_item():
 
     cart = [e for e in cart if e.get("uid") != uid]
     try:
-        cart = _reprice_cart(cart)
+        cart = _reprice_cart(cart, session_id=sess["id"])
     except ValueError as e:
         return jsonify({"error": str(e)}), 409
     sessions_repo.save(sess["id"], user["id"], cart=cart)
@@ -891,7 +927,7 @@ def api_remove_item():
 @app.route("/api/checkout", methods=["POST"])
 @require_telegram_user
 def api_checkout():
-    """Valide le panier local : debit EUR + historique. Pas de commande KFC."""
+    """Valide le panier : transaction atomique (lock DRAFT + debit + order)."""
     user = g.user
     sess = session_store.require_draft_session(user["id"])
     if not sess:
@@ -901,13 +937,10 @@ def api_checkout():
     if not cart:
         return jsonify({"error": "Panier vide"}), 400
 
-    # Autorite absolue : recalcul catalogue + reduction, ignore panier manipule.
     try:
-        cart = _reprice_cart(cart)
+        cart = _reprice_cart(cart, session_id=sess["id"])
     except ValueError as e:
         return jsonify({"error": str(e)}), 409
-    sessions_repo.save(sess["id"], user["id"], cart=cart)
-    sess = {**sess, "cart": cart}
 
     points_total = session_store.cart_points(cart)
     if points_total > POINTS_LIMIT:
@@ -916,86 +949,70 @@ def api_checkout():
         ), 409
 
     total_eur = session_store.cart_total_eur(cart)
-    balance = users_repo.get_balance(user["id"])
-    if balance < total_eur:
-        return jsonify(
-            {
-                "error": (
-                    f"Solde insuffisant ({balance:.2f} EUR) "
-                    f"pour un panier a {total_eur:.2f} EUR."
-                ),
-                "balance": balance,
-                "total": total_eur,
-            }
-        ), 409
-
-    if sess.get("status") != "DRAFT":
-        return jsonify({"error": f"Checkout impossible (statut {sess.get('status')})."}), 409
-
-    ok_debit, new_balance = users_repo.debit_if_sufficient(user["id"], total_eur)
-    if not ok_debit:
-        return jsonify(
-            {
-                "error": (
-                    f"Debit solde impossible "
-                    f"(solde {new_balance:.2f} EUR, total {total_eur:.2f} EUR)."
-                ),
-                "balance": new_balance,
-                "total": total_eur,
-            }
-        ), 409
+    if total_eur <= 0:
+        return jsonify({"error": "Total panier invalide."}), 409
 
     order_uuid = str(uuid.uuid4())
     order_number = f"L-{order_uuid[:8].upper()}"
+    sess = {**sess, "cart": cart}
     snapshot = _order_payload(sess)
+    items = [
+        {
+            "loyalty_id": e.get("itemId"),
+            "name": e.get("name"),
+            "cost": e.get("cost") or 0,
+            "quantity": e.get("quantity") or 1,
+            "modgrps": (e.get("kfc") or {}).get("modgrps") or [],
+        }
+        for e in cart
+    ]
+    last_order = {
+        "number": order_number,
+        "uuid": order_uuid,
+        "points": points_total,
+        "total": total_eur,
+        "status": "QUEUED",
+        "payload": snapshot,
+    }
+
+    from db.repositories import checkout as checkout_repo
 
     try:
-        order_history.save_submitted_order(
+        result = checkout_repo.finalize_local_checkout(
+            session_id=sess["id"],
+            user_id=user["id"],
+            cart=cart,
             order_uuid=order_uuid,
             order_number=order_number,
-            confirmation_url="",
             store_id=sess.get("store_id"),
             store_name=sess.get("store_name"),
             store_city=sess.get("store_city"),
             total_points=points_total,
             total_eur=total_eur,
-            account_id=None,
-            user_id=user["id"],
-            session_id=sess["id"],
-            status="QUEUED",
-            items=[
-                {
-                    "loyalty_id": e.get("itemId"),
-                    "name": e.get("name"),
-                    "cost": e.get("cost") or 0,
-                    "quantity": e.get("quantity") or 1,
-                    "modgrps": (e.get("kfc") or {}).get("modgrps") or [],
-                }
-                for e in cart
-            ],
-        )
-
-        last_order = {
-            "number": order_number,
-            "uuid": order_uuid,
-            "points": points_total,
-            "total": total_eur,
-            "status": "QUEUED",
-            "payload": snapshot,
-        }
-        sessions_repo.save(
-            sess["id"],
-            user["id"],
-            status="CONFIRMED",
-            cart=[],
+            items=items,
             last_order=last_order,
         )
     except Exception:
-        try:
-            new_balance = users_repo.credit(user["id"], total_eur)
-        except Exception:
-            pass
-        raise
+        app.logger.exception("Checkout atomique echoue")
+        return jsonify({"error": "Checkout impossible, reessayez."}), 500
+
+    if not result.get("ok"):
+        code = result.get("code")
+        if code == "INSUFFICIENT":
+            bal = result.get("balance")
+            return jsonify(
+                {
+                    "error": (
+                        f"Solde insuffisant ({float(bal or 0):.2f} EUR) "
+                        f"pour un panier a {total_eur:.2f} EUR."
+                    ),
+                    "balance": bal,
+                    "total": total_eur,
+                }
+            ), 409
+        if code in ("SESSION_NOT_DRAFT", "SESSION_NOT_FOUND"):
+            return jsonify({"error": "Checkout deja en cours ou session invalide."}), 409
+        return jsonify({"error": "Checkout refuse."}), 409
 
     session_store.clear_menu_cache(sess["id"])
 
@@ -1005,7 +1022,7 @@ def api_checkout():
             "orderUUID": order_uuid,
             "points": points_total,
             "total": total_eur,
-            "balance": new_balance,
+            "balance": result.get("balance"),
             "currency": get_currency(),
             "status": "QUEUED",
             "order": snapshot,
@@ -1133,8 +1150,11 @@ def api_admin_order_cancel(order_id: int):
 
     data = request.json or {}
     expl = str(data.get("explication") or "").strip()
+    expl = " ".join(expl.split())
     if not expl:
         return jsonify({"error": "Explication requise"}), 400
+    if len(expl) > 500:
+        return jsonify({"error": "Explication trop longue (max 500)."}), 400
 
     before = orders_repo.get_order_by_id(order_id)
     if not before or before.get("terminer"):

@@ -58,6 +58,14 @@ DB_USER=postgres
 DB_PASSWORD=ton_mot_de_passe
 
 TELEGRAM_BOT_TOKEN=123456:ABC...
+TELEGRAM_AUTH_MAX_AGE_SECONDS=3600
+```
+
+Si webhook Telegram (au lieu du poll) :
+
+```env
+TELEGRAM_WEBHOOK=1
+TELEGRAM_WEBHOOK_SECRET=une-chaine-longue-aleatoire
 ```
 
 PostgreSQL doit tourner et l’utilisateur doit pouvoir créer une base.

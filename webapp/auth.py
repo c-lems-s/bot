@@ -26,10 +26,11 @@ def _bot_token() -> str:
 
 
 def _max_age_seconds() -> int:
+    # Fenetre courte par defaut (anti-rejeu initData).
     try:
-        return max(60, int(os.getenv("TELEGRAM_AUTH_MAX_AGE_SECONDS", "86400")))
+        return max(60, int(os.getenv("TELEGRAM_AUTH_MAX_AGE_SECONDS", "3600")))
     except ValueError:
-        return 86400
+        return 3600
 
 
 def validate_webapp_init_data(init_data: str, bot_token: str) -> Dict[str, Any]:

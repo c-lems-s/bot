@@ -104,6 +104,21 @@ def list_user_paiements(user_id: int, *, limit: int = 50) -> List[Dict[str, Any]
         return rows
 
 
+def count_open_demandes(user_id: int) -> int:
+    """DRAFT + PENDING non traitees (anti-spam recharges)."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*)::int AS n
+            FROM paiement_demande
+            WHERE user_id = %s AND status IN ('DRAFT', 'PENDING')
+            """,
+            (int(user_id),),
+        )
+        row = cur.fetchone()
+        return int(row["n"] or 0) if row else 0
+
+
 def create_demande(user_id: int, moyen_id: int) -> Optional[Dict[str, Any]]:
     moyen = get_moyen(moyen_id)
     if not moyen:
