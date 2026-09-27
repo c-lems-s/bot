@@ -764,6 +764,78 @@ body.autoshop-locked #toast {
   background: #eee;
 }
 
+.notif-criteria {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.notif-criterion-btn {
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.notif-criterion-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.notif-params {
+  margin: 0 0 12px;
+}
+.notif-photos-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 14px;
+}
+.notif-photo-thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.notif-search-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.notif-search-btn { margin-top: 0; }
+.notif-user-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px;
+  max-height: 240px;
+  overflow: auto;
+}
+.notif-user-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.notif-user-row input {
+  margin-top: 3px;
+}
+.notif-user-row strong {
+  display: block;
+  font-size: 14px;
+}
+#notif-send-btn { margin-top: 16px; }
+#notif-clear-users { margin-top: 0; margin-bottom: 8px; }
+
 .gestion-resources {
   display: flex;
   flex-direction: column;

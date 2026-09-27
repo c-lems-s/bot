@@ -57,6 +57,11 @@ const state = {
   gestionResource: null,
   gestionMeta: null,
   _preuveObjectUrls: [],
+  notifCriteria: null,
+  notifCriterion: null,
+  notifParams: {},
+  notifSelectedIds: new Set(),
+  notifPhotoFiles: [],
 };
 
 const POINTS_LIMIT_MSG =
@@ -740,6 +745,261 @@ function openAdminSection(section) {
     state.gestionResource = null;
     renderGestionHub();
     showScreen("gestion");
+  } else if (section === "notification") {
+    openNotificationScreen();
+  }
+}
+
+function openNotificationScreen() {
+  showScreen("notification");
+  const status = $("notif-status");
+  if (status) status.hidden = true;
+  loadNotifCriteria();
+  updateNotifTargetSummary();
+  const photoInput = $("notif-photos");
+  if (photoInput && !photoInput._bound) {
+    photoInput._bound = true;
+    photoInput.onchange = () => {
+      state.notifPhotoFiles = Array.from(photoInput.files || []).slice(0, 10);
+      renderNotifPhotosPreview();
+    };
+  }
+}
+
+function loadNotifCriteria() {
+  const box = $("notif-criteria");
+  if (!box) return;
+  const paint = (criteria) => {
+    box.innerHTML = "";
+    criteria.forEach((c) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "notif-criterion-btn" + (state.notifCriterion === c.id ? " active" : "");
+      btn.textContent = c.label;
+      btn.title = c.description || "";
+      btn.onclick = () => selectNotifCriterion(c);
+      box.appendChild(btn);
+    });
+  };
+  if (state.notifCriteria && state.notifCriteria.length) {
+    paint(state.notifCriteria);
+    return;
+  }
+  box.innerHTML = `<p class="info-note">Chargement des criteres…</p>`;
+  api("/api/admin/notifications/meta")
+    .then((data) => {
+      state.notifCriteria = data.criteria || [];
+      paint(state.notifCriteria);
+    })
+    .catch((e) => {
+      box.innerHTML = `<p class="info-note">${escapeHtml(e.message || "Erreur")}</p>`;
+    });
+}
+
+function selectNotifCriterion(c) {
+  state.notifCriterion = c.id;
+  state.notifParams = {};
+  (c.params || []).forEach((p) => {
+    state.notifParams[p.key] = p.default;
+  });
+  // Selection manuelle ignoree si critere choisi (sauf ajout explicite apres)
+  loadNotifCriteria();
+  renderNotifParams(c);
+  updateNotifTargetSummary();
+}
+
+function renderNotifParams(c) {
+  const box = $("notif-params");
+  if (!box) return;
+  const params = c.params || [];
+  if (!params.length) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = params
+    .map(
+      (p) => `
+      <label class="field-label" for="notif-param-${escapeHtml(p.key)}">${escapeHtml(p.label)}</label>
+      <input class="field-input" id="notif-param-${escapeHtml(p.key)}" type="number"
+        value="${escapeHtml(String(state.notifParams[p.key] ?? p.default ?? ""))}" />`
+    )
+    .join("");
+  params.forEach((p) => {
+    const el = $(`notif-param-${p.key}`);
+    if (!el) return;
+    el.oninput = () => {
+      const v = el.value === "" ? p.default : Number(el.value);
+      state.notifParams[p.key] = Number.isFinite(v) ? v : p.default;
+      updateNotifTargetSummary();
+    };
+  });
+}
+
+function updateNotifTargetSummary() {
+  const el = $("notif-target-summary");
+  if (!el) return;
+  const manual = state.notifSelectedIds.size;
+  if (manual > 0) {
+    el.textContent = `Selection manuelle : ${manual} user(s). (Prioritaire a l'envoi)`;
+    return;
+  }
+  if (!state.notifCriterion) {
+    el.textContent = "Aucun critere selectionne.";
+    return;
+  }
+  const meta = (state.notifCriteria || []).find((c) => c.id === state.notifCriterion);
+  const label = meta ? meta.label : state.notifCriterion;
+  const paramBits = Object.keys(state.notifParams || {})
+    .map((k) => `${k}=${state.notifParams[k]}`)
+    .join(", ");
+  el.textContent = paramBits
+    ? `Critere : ${label} (${paramBits})`
+    : `Critere : ${label}`;
+}
+
+function renderNotifPhotosPreview() {
+  const box = $("notif-photos-preview");
+  if (!box) return;
+  box.innerHTML = "";
+  (state.notifPhotoFiles || []).forEach((file) => {
+    const img = document.createElement("img");
+    img.className = "notif-photo-thumb";
+    img.alt = file.name || "photo";
+    img.src = URL.createObjectURL(file);
+    box.appendChild(img);
+  });
+}
+
+async function previewNotifTargets() {
+  const btn = $("notif-preview-btn");
+  if (btn) btn.disabled = true;
+  try {
+    let body;
+    if (state.notifSelectedIds.size > 0) {
+      body = { userIds: Array.from(state.notifSelectedIds) };
+    } else if (state.notifCriterion) {
+      body = { criterion: state.notifCriterion, params: state.notifParams || {} };
+    } else {
+      toast("Choisissez un critere ou des users");
+      return;
+    }
+    const data = await api("/api/admin/notifications/preview", body);
+    toast(`${data.count || 0} destinataire(s)`);
+    const el = $("notif-target-summary");
+    if (el) {
+      el.textContent = `${data.count || 0} destinataire(s) — ${data.mode === "manual" ? "selection manuelle" : "critere"}`;
+    }
+  } catch (e) {
+    toast(e.message || "Erreur apercu");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function searchNotifUsers() {
+  const q = (($("notif-user-q") || {}).value || "").trim();
+  const list = $("notif-user-list");
+  if (!list) return;
+  list.innerHTML = `<p class="info-note">Chargement…</p>`;
+  try {
+    const data = await api(`/api/admin/notifications/users?q=${encodeURIComponent(q)}`);
+    const users = data.users || [];
+    if (!users.length) {
+      list.innerHTML = `<p class="info-note">Aucun user.</p>`;
+      return;
+    }
+    list.innerHTML = "";
+    users.forEach((u) => {
+      const row = document.createElement("label");
+      row.className = "notif-user-row";
+      const checked = state.notifSelectedIds.has(u.id) ? "checked" : "";
+      const name = u.firstName || (u.username ? "@" + u.username : String(u.telegramId));
+      row.innerHTML = `
+        <input type="checkbox" ${checked} data-uid="${u.id}" />
+        <span>
+          <strong>${escapeHtml(name)}</strong>
+          <span class="c-opts">#${escapeHtml(String(u.id))} · ${escapeHtml(String(u.telegramId))} · ${Number(u.balance || 0).toFixed(2)}</span>
+        </span>`;
+      const cb = row.querySelector("input");
+      cb.onchange = () => {
+        if (cb.checked) state.notifSelectedIds.add(u.id);
+        else state.notifSelectedIds.delete(u.id);
+        updateNotifTargetSummary();
+      };
+      list.appendChild(row);
+    });
+  } catch (e) {
+    list.innerHTML = `<p class="info-note">${escapeHtml(e.message || "Erreur")}</p>`;
+  }
+}
+
+async function sendAdminNotification() {
+  const message = String(($("notif-message") || {}).value || "").trim();
+  const photos = state.notifPhotoFiles || [];
+  if (!message && !photos.length) {
+    toast("Message ou photo requis");
+    return;
+  }
+  const manual = Array.from(state.notifSelectedIds);
+  if (!manual.length && !state.notifCriterion) {
+    toast("Choisissez un critere ou des users");
+    return;
+  }
+
+  // Apercu count avant confirm
+  let countHint = "?";
+  try {
+    const previewBody = manual.length
+      ? { userIds: manual }
+      : { criterion: state.notifCriterion, params: state.notifParams || {} };
+    const prev = await api("/api/admin/notifications/preview", previewBody);
+    countHint = String(prev.count || 0);
+  } catch (e) {
+    /* ignore */
+  }
+  if (!confirm(`Envoyer a ${countHint} destinataire(s) ?`)) return;
+
+  const btn = $("notif-send-btn");
+  const status = $("notif-status");
+  if (btn) btn.disabled = true;
+  if (status) {
+    status.hidden = false;
+    status.textContent = "Envoi en cours…";
+  }
+
+  try {
+    const fd = new FormData();
+    fd.append("message", message);
+    if (manual.length) {
+      fd.append("userIds", JSON.stringify(manual));
+    } else {
+      fd.append("criterion", state.notifCriterion);
+      fd.append("params", JSON.stringify(state.notifParams || {}));
+    }
+    photos.forEach((f) => fd.append("photos", f));
+
+    const opt = {
+      method: "POST",
+      headers: {
+        "X-Telegram-Init-Data": (tg && tg.initData) ? tg.initData : "",
+      },
+      body: fd,
+    };
+    const r = await fetch("/api/admin/notifications/send", opt);
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    if (!r.ok) throw new Error(data.error || `Erreur ${r.status}`);
+    toast(`Envoi lance — ${data.queued || 0} destinataire(s)`);
+    if (status) {
+      status.textContent = `Lance : ${data.queued || 0} destinataire(s), ${data.photos || 0} photo(s).`;
+    }
+  } catch (e) {
+    toast(e.message || "Echec envoi");
+    if (status) status.textContent = e.message || "Echec";
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1585,6 +1845,27 @@ function renderWallet() {
       setNav("admin");
     };
   }
+
+  const notifPreview = $("notif-preview-btn");
+  if (notifPreview) notifPreview.onclick = () => previewNotifTargets();
+  const notifSearch = $("notif-user-search");
+  if (notifSearch) notifSearch.onclick = () => searchNotifUsers();
+  const notifQ = $("notif-user-q");
+  if (notifQ) {
+    notifQ.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") searchNotifUsers();
+    });
+  }
+  const notifClear = $("notif-clear-users");
+  if (notifClear) {
+    notifClear.onclick = () => {
+      state.notifSelectedIds = new Set();
+      searchNotifUsers().catch(() => {});
+      updateNotifTargetSummary();
+    };
+  }
+  const notifSend = $("notif-send-btn");
+  if (notifSend) notifSend.onclick = () => sendAdminNotification();
 })();
 
 /* ---------- Gestion (admin) ---------- */

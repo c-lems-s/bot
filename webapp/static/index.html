@@ -260,6 +260,36 @@
       <div id="admin-paiement-user-box" class="info-card"></div>
     </section>
 
+    <!-- Notification (admin) -->
+    <section class="screen" id="screen-notification">
+      <h2 class="screen-title">Notification</h2>
+      <p class="info-note admin-only-hint">Envoyer un message Telegram aux users cibles.</p>
+
+      <label class="field-label" for="notif-message">Message</label>
+      <textarea class="field-input field-textarea" id="notif-message" rows="5" placeholder="Votre message…"></textarea>
+
+      <label class="field-label" for="notif-photos">Photos (debut du message)</label>
+      <input class="field-input" id="notif-photos" type="file" accept="image/*" multiple />
+      <div id="notif-photos-preview" class="notif-photos-preview"></div>
+
+      <h3 class="section-subtitle">Cible</h3>
+      <div id="notif-criteria" class="notif-criteria"></div>
+      <div id="notif-params" class="notif-params" hidden></div>
+      <p class="info-note" id="notif-target-summary">Aucun critere selectionne.</p>
+      <button class="secondary-btn" id="notif-preview-btn" type="button">Apercu destinataires</button>
+
+      <label class="field-label" for="notif-user-q">Ou choisir des users</label>
+      <div class="notif-search-row">
+        <input class="field-input" id="notif-user-q" type="search" placeholder="Telegram / username…" autocomplete="off" />
+        <button class="secondary-btn notif-search-btn" id="notif-user-search" type="button">Chercher</button>
+      </div>
+      <div id="notif-user-list" class="notif-user-list"></div>
+      <button class="secondary-btn" id="notif-clear-users" type="button">Vider selection manuelle</button>
+
+      <button class="primary-btn" id="notif-send-btn" type="button">Envoyer</button>
+      <div id="notif-status" class="info-note" hidden></div>
+    </section>
+
     <!-- Gestion (admin) — hub -->
     <section class="screen" id="screen-gestion">
       <h2 class="screen-title">Gestion</h2>
@@ -337,6 +367,7 @@
         <button type="button" class="admin-menu-item" data-admin-section="commande">Commande</button>
         <button type="button" class="admin-menu-item" data-admin-section="paiement">Paiement</button>
         <button type="button" class="admin-menu-item" data-admin-section="gestion">Gestion</button>
+        <button type="button" class="admin-menu-item" data-admin-section="notification">Notification</button>
       </div>
     </div>
   </div>

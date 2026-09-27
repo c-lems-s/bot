@@ -1311,8 +1311,10 @@ def api_ma_commande():
 
 
 from webapp import admin_gestion as _admin_gestion  # noqa: E402
+from webapp import admin_notifications as _admin_notifications  # noqa: E402
 
 _admin_gestion.register(app)
+_admin_notifications.register(app)
 
 
 def _warm_cache():
