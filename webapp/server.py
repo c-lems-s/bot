@@ -45,15 +45,6 @@ from webapp import session_store  # noqa: E402
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "paiements")
-ALLOWED_PREUVE_MIME = {
-    "image/jpeg",
-    "image/jpg",
-    "image/png",
-    "image/webp",
-    "image/heic",
-    "image/heif",
-    "application/pdf",
-}
 MAX_PREUVE_BYTES = 8 * 1024 * 1024
 MAX_PREUVES_PAR_DEMANDE = 10
 MAX_DRAFT_TOPUPS = 3
