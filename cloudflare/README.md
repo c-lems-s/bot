@@ -134,6 +134,7 @@ Telegram   :  ouvrir la Mini App via l’URL HTTPS affichee
 | Problème | Piste |
 |----------|--------|
 | `cloudflared` introuvable | Installer le binaire et l’ajouter au `PATH` |
+| `QUIC connection failed` / port **7844** / `hard_fail=true` | Un VPN (souvent **Mullvad**) bloque UDP/TCP 7844 vers Cloudflare. **Couper le VPN** (ou split-tunnel exclure `cloudflared`), puis relancer. `api.cloudflare.com:443` OK ne suffit pas. |
 | Tunnel OK mais page blanche / erreur | Vérifier que Flask écoute bien sur `127.0.0.1:8080` |
 | `401` dans la Mini App | `TELEGRAM_BOT_TOKEN` correct + ouverture **depuis** Telegram (`initData`) |
 | URL trycloudflare change | Normal en mode Quick → repaster dans BotFather, ou passer en Named |

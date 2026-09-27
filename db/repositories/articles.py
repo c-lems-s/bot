@@ -1,4 +1,4 @@
-"""Repository PostgreSQL — catalogue articles (prix EUR + label)."""
+"""Repository PostgreSQL — catalogue articles (prix EUR + label + cost pts)."""
 
 from __future__ import annotations
 
@@ -15,6 +15,12 @@ def _row(row: Any) -> Dict[str, Any]:
         data["price"] = float(price)
     elif price is not None:
         data["price"] = float(price)
+    cost = data.get("cost")
+    if cost is not None:
+        try:
+            data["cost"] = int(cost)
+        except (TypeError, ValueError):
+            data["cost"] = None
     return data
 
 
@@ -26,7 +32,7 @@ def get_by_kfc_ids(kfc_item_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     with get_cursor() as cur:
         cur.execute(
             """
-            SELECT id, kfc_item_id, name, label, price, updated_at
+            SELECT id, kfc_item_id, name, label, price, cost, updated_at
             FROM article
             WHERE kfc_item_id = ANY(%s)
             """,

@@ -12,6 +12,7 @@ if (-not $cloudflared) {
 
 Write-Host "[i] Tunnel Quick -> http://127.0.0.1:8080" -ForegroundColor Cyan
 Write-Host "[i] Copiez l'URL https://....trycloudflare.com affichee ci-dessous dans BotFather." -ForegroundColor Cyan
+Write-Host "[!] Si QUIC/7844 echoue : couper Mullvad/VPN puis relancer." -ForegroundColor Yellow
 Write-Host ""
 
 & cloudflared tunnel --url http://127.0.0.1:8080

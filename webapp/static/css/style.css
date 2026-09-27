@@ -57,7 +57,19 @@ body {
   justify-content: space-between;
   gap: 12px;
 }
+.account-name-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
 .account-name { font-size: 18px; font-weight: 700; }
+.app-version {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim, #888);
+  white-space: nowrap;
+}
 .account-right { display: flex; align-items: center; gap: 10px; }
 .pill {
   display: flex; align-items: center; gap: 8px;
@@ -251,6 +263,66 @@ body {
   filter: grayscale(0.35);
 }
 .product-card.unavailable:active { transform: none; }
+.product-card.unavailable.over-limit {
+  cursor: pointer;
+}
+
+.points-limit-banner {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: #fff4f4;
+  border: 1px solid #f0c2c2;
+  border-radius: 12px;
+  color: #7a1a1a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.points-limit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.points-limit-overlay[hidden] {
+  display: none !important;
+}
+.points-limit-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.points-limit-close svg {
+  width: 22px;
+  height: 22px;
+}
+.points-limit-panel {
+  max-width: 420px;
+  width: 100%;
+  background: #fff;
+  border-radius: 16px;
+  padding: 22px 20px;
+  color: #222;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.points-limit-panel p {
+  margin: 0;
+}
 .product-cost {
   margin-top: 8px;
   font-weight: 800;
@@ -344,6 +416,106 @@ body {
 }
 .info-line span:last-child { color: var(--accent); }
 .info-note { color: var(--text-dim); font-size: 13px; line-height: 1.5; margin: 0; }
+
+.section-subtitle {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 22px 0 10px;
+  color: var(--text);
+}
+.wallet-balance-card { margin: 14px 0 4px; }
+#btn-add-solde { margin-bottom: 4px; }
+
+.info-line-stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.topup-lien {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-all;
+  line-height: 1.4;
+}
+.field-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 16px 0 8px;
+  color: var(--text);
+}
+.field-error {
+  color: #e53935;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 8px 0 0;
+}
+#topup-montant-continue { margin-top: 12px; }
+.field-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+}
+.topup-preuves {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+.topup-preuve-item {
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+#topup-add-preuve,
+#topup-finalize,
+#topup-done-ok { margin-top: 12px; }
+
+.modal-center {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.modal-overlay.modal-center {
+  align-items: center;
+  justify-content: center;
+}
+.modal-square {
+  width: min(320px, 100%);
+  max-width: 320px;
+  border-radius: 18px;
+  align-self: center;
+  margin: 0;
+}
+.modal-square .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 16px;
+}
+.moyen-pick-btn {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+}
+.moyen-pick-btn:active { opacity: 0.85; }
+.wallet-pay-row .c-opts { margin-top: 2px; }
 
 /* ---------- Modale ---------- */
 .modal-overlay {
@@ -443,4 +615,119 @@ body {
   position: absolute; top: 0; left: 20%; right: 20%;
   height: 3px; border-radius: 0 0 3px 3px;
   background: var(--accent);
+}
+
+/* ---------- Maintenance / session KFC bloquee ---------- */
+.autoshop-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: #0f0f10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  text-align: center;
+}
+.autoshop-lock[hidden] {
+  display: none !important;
+}
+.autoshop-lock p {
+  white-space: pre-wrap;
+  text-align: center;
+  margin: 0;
+  max-width: 360px;
+  color: #f2f2f2;
+  font-size: 16px;
+  line-height: 1.55;
+  font-weight: 500;
+}
+body.autoshop-locked .account-card,
+body.autoshop-locked #app,
+body.autoshop-locked .bottom-nav,
+body.autoshop-locked .modal-overlay,
+body.autoshop-locked .points-limit-overlay,
+body.autoshop-locked #toast {
+  display: none !important;
+  pointer-events: none !important;
+}
+
+.admin-only-hint { margin: 0 0 12px; }
+.admin-order-row .c-opts + .c-opts {
+  margin-top: 4px;
+  color: var(--text-dim);
+}
+.nav-item.nav-admin-only[hidden] {
+  display: none !important;
+}
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.queue-item {
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-weight: 700;
+  font-size: 15px;
+}
+.queue-item-btn {
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+.danger-btn {
+  width: 100%;
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: none;
+  border-radius: 14px;
+  background: #c62828;
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+}
+.secondary-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+.admin-action-panel { margin-top: 18px; }
+.field-textarea { min-height: 90px; resize: vertical; }
+.order-items-pre {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 10px 0 0;
+}
+.ma-commande-box { margin-top: 8px; }
+.ma-commande-banner {
+  font-weight: 800;
+  margin-bottom: 12px;
+  font-size: 15px;
+}
+.ma-commande-banner.ok { color: var(--accent); }
+.ma-commande-banner.cancel { color: #e53935; }
+.ma-commande-items {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.nav-ma-commande[hidden],
+.nav-item.nav-admin-only[hidden] {
+  display: none !important;
 }

@@ -9,5 +9,8 @@
   "recaptcha_token": "",
   "enable_analytics": false,
   "balance": 0.98,
-  "currency": "EUR"
+  "currency": "EUR",
+  "reduction": 100,
+  "version": "1",
+  "admin": 123456789
 }

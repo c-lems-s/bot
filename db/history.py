@@ -14,10 +14,12 @@ def save_submitted_order(
     store_name: Optional[str] = None,
     store_city: Optional[str] = None,
     total_points: int = 0,
+    total_eur: Optional[float] = None,
     account_id: Optional[str] = None,
     user_id: Optional[int] = None,
     session_id: Optional[int] = None,
     items: Optional[List[Dict[str, Any]]] = None,
+    status: str = "QUEUED",
 ) -> Optional[int]:
     try:
         from db.repositories import orders as orders_repo
@@ -29,8 +31,9 @@ def save_submitted_order(
             store_id=store_id,
             store_name=store_name,
             store_city=store_city,
-            status="SUBMITTED",
+            status=status or "QUEUED",
             total_points=total_points,
+            total_eur=total_eur,
             account_id=account_id,
             user_id=user_id,
             session_id=session_id,

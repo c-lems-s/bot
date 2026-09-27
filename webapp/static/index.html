@@ -10,7 +10,10 @@
 <body>
   <!-- Carte compte / panier -->
   <div class="account-card">
-    <div class="account-name" id="store-title">KFC Autoshop</div>
+    <div class="account-name-wrap">
+      <div class="account-name" id="store-title">KFC Autoshop</div>
+      <span class="app-version" id="app-version" hidden></span>
+    </div>
     <div class="account-right">
       <div class="pill" id="points-pill">
         <span class="pill-ic">
@@ -45,6 +48,12 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
         <span>Changer de restaurant</span>
       </button>
+      <div id="points-limit-banner" class="points-limit-banner" hidden>
+        Vous avez atteint le max d'ajout au panier pour certains articles.
+        Soumettez celui-ci avant de pouvoir commander à nouveau ces articles.
+        Vous pouvez faire plusieurs commandes successives sans souci.
+        Vous pouvez également supprimer des articles de votre panier actuel.
+      </div>
       <div id="menu-container"></div>
       <div id="menu-loading" class="empty-hint" hidden>Chargement du menu…</div>
     </section>
@@ -70,10 +79,79 @@
     <!-- Portefeuille -->
     <section class="screen" id="screen-portefeuille">
       <h2 class="screen-title">Portefeuille</h2>
-      <div class="info-card">
-        <div class="info-line"><span>Points de fidelite</span><span id="wallet-points">— pts</span></div>
-        <p class="info-note">Vos points servent a commander vos articles. Le cout en points est indique sur chaque produit.</p>
+      <button class="primary-btn" id="btn-add-solde" type="button">Ajouter du solde</button>
+      <div class="info-card wallet-balance-card">
+        <div class="info-line"><span>Solde</span><span id="wallet-balance">— EUR</span></div>
+        <p class="info-note">Votre solde sert a payer vos commandes dans la boutique.</p>
       </div>
+
+      <h3 class="section-subtitle">Historique des paiements</h3>
+      <div id="wallet-paiements" class="cart-list"></div>
+      <div id="wallet-paiements-empty" class="empty-hint" hidden>Aucun paiement pour le moment.</div>
+    </section>
+
+    <!-- Recharge : montant (apres moyen, avant preuves) -->
+    <section class="screen" id="screen-topup-montant">
+      <button class="back-btn" id="topup-montant-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Retour</span>
+      </button>
+      <h2 class="screen-title" id="topup-montant-title">Montant</h2>
+      <div class="info-card">
+        <p class="info-note">Indiquez le montant que vous allez payer (EUR).</p>
+      </div>
+      <label class="field-label" for="topup-montant">Montant (EUR)</label>
+      <input
+        type="text"
+        id="topup-montant"
+        class="field-input"
+        inputmode="decimal"
+        autocomplete="off"
+        placeholder="0.00"
+      />
+      <p class="field-error" id="topup-montant-error" hidden>montant invalide</p>
+      <button class="primary-btn" id="topup-montant-continue" type="button" disabled>Continuer</button>
+    </section>
+
+    <!-- Recharge : instructions + preuves -->
+    <section class="screen" id="screen-topup">
+      <button class="back-btn" id="topup-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Retour</span>
+      </button>
+      <h2 class="screen-title" id="topup-title">Paiement</h2>
+
+      <div class="info-card">
+        <div class="info-line info-line-stack">
+          <span>Lien du paiement</span>
+          <a id="topup-lien" class="topup-lien" href="#" target="_blank" rel="noopener noreferrer">—</a>
+        </div>
+        <p class="info-note" id="topup-montant-recap"></p>
+        <p class="info-note">
+          Payez maintenant via le lien ci-dessus. Une fois le paiement effectue,
+          ajoutez une ou plusieurs captures d'ecran comme preuve pour que le shop
+          puisse verifier que le paiement est valide.
+        </p>
+      </div>
+
+      <input type="file" id="topup-file" accept="image/*,application/pdf" multiple hidden />
+      <button class="primary-btn" id="topup-add-preuve" type="button">Ajouter une preuve</button>
+      <div id="topup-preuves" class="topup-preuves"></div>
+      <div id="topup-preuves-empty" class="empty-hint">Aucune preuve ajoutee.</div>
+
+      <button class="primary-btn" id="topup-finalize" type="button" disabled>Finaliser</button>
+    </section>
+
+    <!-- Recharge : merci -->
+    <section class="screen" id="screen-topup-done">
+      <h2 class="screen-title">Merci !</h2>
+      <div class="info-card">
+        <p class="info-note" id="topup-thanks">
+          Merci pour votre achat. Vous recevrez une notification lorsque votre
+          paiement sera accepte par un administrateur.
+        </p>
+      </div>
+      <button class="primary-btn" id="topup-done-ok" type="button">Retour au portefeuille</button>
     </section>
 
     <!-- Historique -->
@@ -83,6 +161,13 @@
       <div id="history-empty" class="empty-hint">Aucune commande pour le moment.</div>
     </section>
 
+    <!-- Ma commande (user, jusqu'a minuit) -->
+    <section class="screen" id="screen-ma-commande">
+      <h2 class="screen-title">Ma commande</h2>
+      <div id="ma-commande-box" class="ma-commande-box"></div>
+      <div id="ma-commande-empty" class="empty-hint" hidden>Aucune commande a consulter.</div>
+    </section>
+
     <!-- SAV -->
     <section class="screen" id="screen-sav">
       <h2 class="screen-title">SAV</h2>
@@ -90,7 +175,73 @@
         <p class="info-note">Recherchez un restaurant, ajoutez des articles avec leurs options, consultez votre panier puis validez votre commande.</p>
       </div>
     </section>
+
+    <!-- Commande (admin) — file -->
+    <section class="screen" id="screen-commande">
+      <h2 class="screen-title">Commande</h2>
+      <p class="info-note admin-only-hint">File d'attente — commandes en cours.</p>
+      <div id="admin-orders-list" class="queue-list"></div>
+      <div id="admin-orders-empty" class="empty-hint" hidden>File vide.</div>
+    </section>
+
+    <!-- Commande (admin) — detail -->
+    <section class="screen" id="screen-commande-detail">
+      <button class="back-btn" id="admin-order-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>File d'attente</span>
+      </button>
+      <h2 class="screen-title">Detail commande</h2>
+      <div id="admin-order-detail" class="info-card"></div>
+      <button class="secondary-btn" id="admin-user-info-btn" type="button">User info</button>
+
+      <div id="admin-complete-panel" class="admin-action-panel">
+        <h3 class="section-subtitle">Terminer la commande</h3>
+        <label class="field-label" for="admin-f-prenom">Prenom</label>
+        <input class="field-input" id="admin-f-prenom" type="text" autocomplete="off" />
+        <label class="field-label" for="admin-f-resto">Restaurant</label>
+        <input class="field-input" id="admin-f-resto" type="text" autocomplete="off" />
+        <label class="field-label" for="admin-f-heure">Heure max</label>
+        <input class="field-input" id="admin-f-heure" type="text" autocomplete="off" />
+        <label class="field-label" for="admin-f-preuve">Lien de preuve</label>
+        <input class="field-input" id="admin-f-preuve" type="text" autocomplete="off" />
+        <button class="primary-btn" id="admin-complete-btn" type="button">Finaliser</button>
+      </div>
+
+      <div id="admin-cancel-panel" class="admin-action-panel" hidden>
+        <h3 class="section-subtitle">Annuler la commande</h3>
+        <label class="field-label" for="admin-cancel-expl">Explication</label>
+        <textarea class="field-input field-textarea" id="admin-cancel-expl" rows="4"></textarea>
+        <button class="primary-btn" id="admin-cancel-finalize" type="button">Finaliser l'annulation</button>
+        <button class="secondary-btn" id="admin-cancel-abort" type="button">Retour</button>
+      </div>
+
+      <button class="danger-btn" id="admin-cancel-btn" type="button">Annuler la commande</button>
+    </section>
+
+    <!-- Commande (admin) — user info -->
+    <section class="screen" id="screen-commande-user">
+      <button class="back-btn" id="admin-user-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Retour detail</span>
+      </button>
+      <h2 class="screen-title">User info</h2>
+      <div id="admin-user-box" class="info-card"></div>
+    </section>
   </main>
+
+  <!-- ===================== MODALE MOYENS DE PAIEMENT ===================== -->
+  <div class="modal-overlay modal-center" id="moyens-overlay" hidden>
+    <div class="modal modal-square">
+      <div class="modal-header">
+        <span>Moyen de paiement</span>
+        <button class="modal-close" id="moyens-close" aria-label="Fermer" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="moyens-body"></div>
+      <div id="moyens-empty" class="empty-hint" hidden>Aucun moyen de paiement configure.</div>
+    </div>
+  </div>
 
   <!-- ===================== MODALE OPTIONS ===================== -->
   <div class="modal-overlay" id="options-overlay" hidden>
@@ -106,8 +257,30 @@
     </div>
   </div>
 
+  <!-- Limite points panier — notif plein ecran -->
+  <div class="points-limit-overlay" id="points-limit-overlay" hidden>
+    <button class="points-limit-close" id="points-limit-close" aria-label="Fermer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div class="points-limit-panel">
+      <p id="points-limit-overlay-text">
+        Vous avez atteint le max d'ajout au panier pour certains articles.
+        Soumettez celui-ci avant de pouvoir commander à nouveau ces articles.
+        Vous pouvez faire plusieurs commandes successives sans souci.
+        Vous pouvez également supprimer des articles de votre panier actuel.
+      </p>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div id="toast" class="toast" hidden></div>
+
+  <!-- Ecran bloquant maintenance / session KFC -->
+  <div id="autoshop-lock" class="autoshop-lock" hidden>
+    <p id="autoshop-lock-text">
+      Le shop est inactif pour le moment.
+    </p>
+  </div>
 
   <!-- ===================== NAV BASSE ===================== -->
   <nav class="bottom-nav">
@@ -129,11 +302,23 @@
       </span>
       <span>Historique</span>
     </button>
+    <button class="nav-item nav-ma-commande" data-nav="ma-commande" id="nav-ma-commande" hidden>
+      <span class="nav-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      </span>
+      <span>Ma commande</span>
+    </button>
     <button class="nav-item" data-nav="sav">
       <span class="nav-ic">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.4"/><path d="M14.5 9.5 18 6M9.5 14.5 6 18M14.5 14.5 18 18M9.5 9.5 6 6"/></svg>
       </span>
       <span>SAV</span>
+    </button>
+    <button class="nav-item nav-admin-only" data-nav="commande" id="nav-commande" hidden>
+      <span class="nav-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+      </span>
+      <span>Commande</span>
     </button>
   </nav>
 

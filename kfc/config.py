@@ -59,6 +59,10 @@ def load_config(*, force: bool = False) -> Dict[str, Any]:
         "balance": float(row.get("balance") if row.get("balance") is not None else 0.98),
         "currency": row.get("currency") or "EUR",
         "reduction": max(0.0, min(100.0, reduction)),
+        "version": str(row.get("version") or "1"),
+        "admin": row.get("admin"),
+        "actif": bool(row.get("actif", True)) if row.get("actif") is not None else True,
+        "prochaine_heure": row.get("prochaine_heure"),
     }
     return _CACHE
 
@@ -118,3 +122,83 @@ def apply_reduction(price: float, reduction: float | None = None) -> float:
     except (TypeError, ValueError):
         return 0.0
     return round(max(0.0, p) * max(0.0, min(100.0, r)) / 100.0, 2)
+
+
+def get_version() -> str:
+    """Numero de version (table config)."""
+    try:
+        return str(load_config().get("version") or "1")
+    except RuntimeError:
+        return "1"
+
+
+def get_admin() -> int | None:
+    """Telegram id admin (table config.admin), ou None."""
+    try:
+        raw = load_config().get("admin")
+    except RuntimeError:
+        return None
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def is_admin(telegram_id) -> bool:
+    """True si telegram_id correspond a config.admin."""
+    admin = get_admin()
+    if admin is None:
+        return False
+    try:
+        return int(telegram_id) == admin
+    except (TypeError, ValueError):
+        return False
+
+
+def is_shop_actif() -> bool:
+    try:
+        return bool(load_config().get("actif", True))
+    except RuntimeError:
+        return True
+
+
+def get_prochaine_heure() -> str | None:
+    try:
+        raw = load_config().get("prochaine_heure")
+    except RuntimeError:
+        return None
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
+def shop_inactive_message() -> str:
+    """Message affiche aux users quand le shop est inactif."""
+    heure = get_prochaine_heure()
+    affichage = heure if heure else "aucune date fourni par l'admin"
+    return (
+        "Le shop est inactif pour le moment.\n\n"
+        "Vous devez attendre qu'il soit a nouveau actif pour commander. "
+        "La disponibilite depend des moments de la journee.\n\n"
+        "La prochaine heure d'ouverture sera :\n"
+        f"{affichage}"
+    )
+
+
+def set_shop_actif(actif: bool) -> Dict[str, Any]:
+    from db.repositories import config as config_repo
+
+    row = config_repo.set_actif(bool(actif))
+    clear_cache()
+    return row
+
+
+def set_prochaine_heure(heure: str | None) -> Dict[str, Any]:
+    from db.repositories import config as config_repo
+
+    row = config_repo.set_prochaine_heure(heure)
+    clear_cache()
+    return row

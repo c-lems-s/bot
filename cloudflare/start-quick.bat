@@ -12,6 +12,7 @@ if errorlevel 1 (
 
 echo [i] Tunnel Quick -^> http://127.0.0.1:8080
 echo [i] Copiez l'URL https://....trycloudflare.com affichee ci-dessous dans BotFather.
+echo [!] Si QUIC/7844 echoue : couper Mullvad/VPN puis relancer.
 echo.
 
 cloudflared tunnel --url http://127.0.0.1:8080

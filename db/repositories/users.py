@@ -70,13 +70,35 @@ def get_by_id(user_id: int) -> Optional[Dict[str, Any]]:
         cur.execute(
             """
             SELECT id, telegram_id, username, first_name, last_name,
-                   language_code, is_active, balance
+                   language_code, is_active, balance,
+                   first_seen_at, last_seen_at
             FROM users WHERE id = %s
             """,
             (int(user_id),),
         )
         row = cur.fetchone()
         return _row_to_user(row) if row else None
+
+
+def get_purchase_stats(user_id: int) -> Dict[str, Any]:
+    """Nombre d'achats (commandes) + date du dernier achat."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                COUNT(*)::int AS purchase_count,
+                MAX(submitted_at) AS last_purchase_at
+            FROM orders
+            WHERE user_id = %s
+            """,
+            (int(user_id),),
+        )
+        row = cur.fetchone() or {}
+        last = row.get("last_purchase_at")
+        return {
+            "purchaseCount": int(row.get("purchase_count") or 0),
+            "lastPurchaseAt": last.isoformat() if last else None,
+        }
 
 
 def get_balance(user_id: int) -> float:
@@ -98,6 +120,29 @@ def set_balance(user_id: int, balance: float) -> float:
             RETURNING balance
             """,
             (float(balance), int(user_id)),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(f"user {user_id} introuvable")
+        return float(row["balance"])
+
+
+def credit(user_id: int, amount: float) -> float:
+    """Credite le solde (remboursement / correction). Retourne le solde apres."""
+    amount = float(amount)
+    if amount < 0:
+        raise ValueError("montant credit negatif")
+    if amount == 0:
+        return get_balance(user_id)
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            UPDATE users
+            SET balance = COALESCE(balance, 0) + %s
+            WHERE id = %s
+            RETURNING balance
+            """,
+            (amount, int(user_id)),
         )
         row = cur.fetchone()
         if not row:
@@ -138,4 +183,4 @@ def debit_if_sufficient(user_id: int, amount: float) -> Tuple[bool, float]:
         if not cur_row or cur_row["balance"] is None:
             return False, 0.0
         return False, float(cur_row["balance"])
-
+

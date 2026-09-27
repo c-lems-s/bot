@@ -40,22 +40,8 @@ def get_draft(user_id: int) -> Optional[Dict[str, Any]]:
 
 
 def get_open(user_id: int) -> Optional[Dict[str, Any]]:
-    """Session DRAFT, sinon derniere SUBMITTED (pour check-in)."""
-    draft = get_draft(user_id)
-    if draft:
-        return draft
-    with get_cursor() as cur:
-        cur.execute(
-            """
-            SELECT * FROM sessions
-            WHERE user_id = %s AND status = 'SUBMITTED'
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (int(user_id),),
-        )
-        row = cur.fetchone()
-        return _row_to_session(row) if row else None
+    """Session DRAFT active (panier local)."""
+    return get_draft(user_id)
 
 
 def get_by_id(session_id: int, user_id: int) -> Optional[Dict[str, Any]]:

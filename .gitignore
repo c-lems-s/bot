@@ -9,7 +9,7 @@ store_blacklist.json.imported
 cloudflare/config.yml
 cloudflare/*.json
 
-# Python
+uploads/
 __pycache__/
 *.pyc
 *.pyo

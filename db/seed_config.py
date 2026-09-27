@@ -64,6 +64,17 @@ def seed_config_from_file(path: str | None = None, *, force: bool = False) -> bo
     except (TypeError, ValueError):
         reduction = 100.0
 
+    admin_raw = data.get("admin", "__missing__")
+    if admin_raw == "__missing__":
+        admin = existing.get("admin") if existing else None
+    elif admin_raw is None or admin_raw == "":
+        admin = None
+    else:
+        try:
+            admin = int(admin_raw)
+        except (TypeError, ValueError):
+            admin = existing.get("admin") if existing else None
+
     config_repo.upsert(
         account_id=str(data.get("account_id") or ""),
         authorization=str(data.get("authorization") or ""),
@@ -73,6 +84,8 @@ def seed_config_from_file(path: str | None = None, *, force: bool = False) -> bo
         balance=balance,
         currency=str(data.get("currency") or "EUR"),
         reduction=reduction,
+        version=str(data.get("version") or "1"),
+        admin=admin,
     )
     clear_cache()
     print(f"[seed_config] Importe depuis {path} -> table config")

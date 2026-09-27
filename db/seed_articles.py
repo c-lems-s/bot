@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from db.connection import get_cursor
 
-# Catalogue manuel (price/label/name). cost/categorie = ref métier, non stockés.
+# Catalogue manuel (price / label / name / cost pts).
 LOYALTY_PRODUCTS = {
     "loyalty-3623": {
         "price": 1,
@@ -290,17 +290,23 @@ def seed_articles() -> int:
     n = 0
     with get_cursor() as cur:
         for kid, meta in LOYALTY_PRODUCTS.items():
+            cost = meta.get("cost")
+            try:
+                cost_i = int(cost) if cost is not None else None
+            except (TypeError, ValueError):
+                cost_i = None
             cur.execute(
                 """
-                INSERT INTO article (kfc_item_id, name, label, price, updated_at)
-                VALUES (%s, %s, %s, %s, NOW())
+                INSERT INTO article (kfc_item_id, name, label, price, cost, updated_at)
+                VALUES (%s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (kfc_item_id) DO UPDATE SET
                     name = EXCLUDED.name,
                     label = EXCLUDED.label,
                     price = EXCLUDED.price,
+                    cost = EXCLUDED.cost,
                     updated_at = NOW()
                 """,
-                (kid, meta["name"], meta["label"], float(meta["price"])),
+                (kid, meta["name"], meta["label"], float(meta["price"]), cost_i),
             )
             n += 1
         cur.execute("SELECT COUNT(*) AS c FROM article")
