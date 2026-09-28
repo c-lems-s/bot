@@ -258,6 +258,57 @@ async function selectStore(s) {
   }
 }
 
+/* Images produit : proxy same-origin (fiable dans Telegram WebView).
+   Fallback CDN direct si le proxy échoue — pas de loading=lazy (bug iOS TG). */
+const _PRODUCT_THUMB_SVG =
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h10l-1 12H8L7 8z"/><path d="M6 8h12"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>`;
+
+function kfcImageCandidates(name) {
+  const n = String(name || "").trim();
+  if (!n) return [];
+  const enc = encodeURIComponent(n);
+  const sizes = ["xs", "sm", "md", "lg"];
+  const urls = [`/api/kfc-image/${enc}`];
+  for (const s of sizes) {
+    urls.push(`https://static.kfc.fr/images/items/${s}/${enc}.jpg`);
+  }
+  return urls;
+}
+
+function productThumbHtml(imageName, alt) {
+  const urls = kfcImageCandidates(imageName);
+  if (!urls.length) {
+    return `<div class="product-thumb">${_PRODUCT_THUMB_SVG}</div>`;
+  }
+  const altEsc = escapeHtml(alt || "");
+  // data-fallbacks : JSON encode + HTML escape pour attribut
+  const fb = escapeHtml(JSON.stringify(urls.slice(1)));
+  return `<img class="product-img" src="${urls[0]}" alt="${altEsc}"
+             referrerpolicy="no-referrer" decoding="async"
+             data-fallbacks="${fb}"
+             onerror="window.__kfcImgFallback(this)" />
+           <div class="product-thumb" style="display:none">${_PRODUCT_THUMB_SVG}</div>`;
+}
+
+window.__kfcImgFallback = function (img) {
+  if (!img) return;
+  let list = [];
+  try {
+    list = JSON.parse(img.getAttribute("data-fallbacks") || "[]");
+  } catch (e) {
+    list = [];
+  }
+  if (!Array.isArray(list)) list = [];
+  if (list.length) {
+    img.src = list.shift();
+    img.setAttribute("data-fallbacks", JSON.stringify(list));
+    return;
+  }
+  img.style.display = "none";
+  const ph = img.nextElementSibling;
+  if (ph) ph.style.display = "flex";
+};
+
 function renderMenu(categories) {
   const c = $("menu-container");
   c.innerHTML = "";
@@ -285,16 +336,7 @@ function renderMenu(categories) {
         : overLimit
           ? "product-card unavailable over-limit"
           : "product-card unavailable";
-      const imgUrl = it.image ? `https://static.kfc.fr/images/items/xs/${encodeURIComponent(it.image)}.jpg` : "";
-      const thumb = imgUrl
-        ? `<img class="product-img" src="${imgUrl}" alt="${escapeHtml(it.name)}" loading="lazy"
-             onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
-           <div class="product-thumb" style="display:none">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h10l-1 12H8L7 8z"/><path d="M6 8h12"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>
-           </div>`
-        : `<div class="product-thumb">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h10l-1 12H8L7 8z"/><path d="M6 8h12"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>
-           </div>`;
+      const thumb = productThumbHtml(it.image, it.name);
       let priceHtml;
       if (!inCatalog) {
         priceHtml = `<div class="product-price soon">Bientôt disponible</div>`;

@@ -48,6 +48,7 @@ from db.repositories import users as users_repo  # noqa: E402
 from webapp.auth import require_telegram_user  # noqa: E402
 from webapp.boot import prepare_runtime  # noqa: E402
 from webapp.env import app_env, bind_host, is_cloud, telegram_webhook_enabled  # noqa: E402
+from webapp.kfc_images import register_kfc_image_routes  # noqa: E402
 from webapp.paths import ensure_uploads_dirs, paiements_uploads_dir  # noqa: E402
 from webapp import session_store  # noqa: E402
 
@@ -81,10 +82,15 @@ def _sniff_preuve_type(raw: bytes):
 
 app = Flask(__name__, static_folder=None)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+register_kfc_image_routes(app)
 
 
 @app.after_request
 def _no_cache(response):
+    # Images produit : garder le Cache-Control pose par la route proxy
+    path = request.path or ""
+    if path.startswith("/api/kfc-image/"):
+        return response
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     return response
@@ -93,6 +99,7 @@ def _no_cache(response):
 # Routes API accessibles meme si le shop est inactif
 _SHOP_OPEN_EXEMPT_PREFIXES = (
     "/api/me",
+    "/api/kfc-image/",
     "/telegram/",
 )
 
