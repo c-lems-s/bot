@@ -189,7 +189,13 @@ Le repo est prêt (`Procfile`, `railway.toml`, gunicorn, `/health`).
 | `ADMIN_TELEGRAM_ID` | ton id Telegram numérique (seed `config.admin`) |
 | `UPLOADS_ROOT` | `/data/uploads` (si volume monté, voir ci-dessous) |
 
-`DATABASE_URL` est fourni automatiquement par le plugin Postgres.
+`DATABASE_URL` n’est **pas** magique : après avoir créé Postgres, il faut le **référencer** dans le service web :
+
+1. Service **web** → **Variables** → **Add Variable** → **Add Reference**  
+2. Choisir le service **Postgres** → variable `DATABASE_URL`  
+3. Redeploy  
+
+Sans ça, le boot affiche `localhost:5432 Connection refused`.
 
 4. **Volume uploads** (preuves paiement + photos notif) — sinon les fichiers disparaissent à chaque redeploy :  
    - Service web → **Volumes** → Add volume  

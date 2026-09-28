@@ -19,6 +19,16 @@ from webapp.env import app_env, is_cloud, should_create_database  # noqa: E402
 def prepare_runtime() -> None:
     """Migrations (+ creation DB locale si besoin). Idempotent."""
     print(f"[boot] APP_ENV={app_env()}")
+    _log_db_config()
+
+    if is_cloud() and not has_database_url():
+        raise RuntimeError(
+            "DATABASE_URL manquant en cloud. "
+            "Sur Railway : ajoutez Postgres, puis Variables → "
+            "Add variable reference → Postgres → DATABASE_URL "
+            "(ou collez ${{Postgres.DATABASE_URL}})."
+        )
+
     if should_create_database():
         from db.ensure_db import ensure_database
 
@@ -28,7 +38,10 @@ def prepare_runtime() -> None:
         from db.connection import close_pool, init_db
         from db.migrate import migrate
 
-        print("[boot] Mode cloud / DATABASE_URL — migrate uniquement")
+        if has_database_url():
+            print("[boot] Migrate via DATABASE_URL")
+        else:
+            print("[boot] Migrate via DB_HOST/DB_*")
         close_pool()
         init_db()
         migrate()
@@ -36,6 +49,26 @@ def prepare_runtime() -> None:
     _ensure_uploads()
     _maybe_seed_admin()
     _maybe_set_webhook()
+
+
+def _log_db_config() -> None:
+    """Log non sensible de la config DB (aide debug Railway)."""
+    if has_database_url():
+        raw = (os.getenv("DATABASE_URL") or "").strip()
+        # Masquer user/pass, garder le host si possible
+        host = "?"
+        try:
+            # postgresql://user:pass@host:port/db
+            after_at = raw.split("@", 1)[1] if "@" in raw else raw
+            host = after_at.split("/", 1)[0]
+        except Exception:
+            pass
+        print(f"[boot] DATABASE_URL present (host={host})")
+    else:
+        print(
+            "[boot] DATABASE_URL absent — "
+            f"fallback DB_HOST={os.getenv('DB_HOST', 'localhost')!r}"
+        )
 
 
 def _ensure_uploads() -> None:
