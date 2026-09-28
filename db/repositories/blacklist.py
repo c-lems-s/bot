@@ -56,7 +56,7 @@ def add_store(
     name: str = "",
     city: str = "",
     matched_items: Optional[int] = None,
-    reason: str = "loyalty_match",
+    reason: str = "manual",
 ) -> None:
     if not store_id:
         return

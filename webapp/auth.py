@@ -1,8 +1,8 @@
 """
-Auth Telegram WebApp (initData).
+Auth Telegram WebApp (initData) — production.
 
-Valide la signature HMAC et upsert l'utilisateur.
-Dev local : ALLOW_DEV_AUTH=1 + header X-Dev-Telegram-Id (defaut 1).
+Seul un initData Telegram signe (HMAC) est accepte.
+Aucun contournement DEV : le client ne choisit jamais l'identite.
 """
 
 from __future__ import annotations
@@ -26,14 +26,11 @@ def _bot_token() -> str:
 
 
 def _max_age_seconds() -> int:
+    # Fenetre courte par defaut (anti-rejeu initData).
     try:
-        return max(60, int(os.getenv("TELEGRAM_AUTH_MAX_AGE_SECONDS", "86400")))
+        return max(60, int(os.getenv("TELEGRAM_AUTH_MAX_AGE_SECONDS", "3600")))
     except ValueError:
-        return 86400
-
-
-def _dev_auth_enabled() -> bool:
-    return (os.getenv("ALLOW_DEV_AUTH") or "").strip() in ("1", "true", "True", "yes")
+        return 3600
 
 
 def validate_webapp_init_data(init_data: str, bot_token: str) -> Dict[str, Any]:
@@ -80,33 +77,20 @@ def resolve_request_user() -> Dict[str, Any]:
     init_data = (request.headers.get("X-Telegram-Init-Data") or "").strip()
     bot_token = _bot_token()
 
-    if init_data and bot_token:
-        tg_user = validate_webapp_init_data(init_data, bot_token)
-        return users_repo.upsert_from_telegram(
-            telegram_id=int(tg_user["id"]),
-            username=tg_user.get("username"),
-            first_name=tg_user.get("first_name"),
-            last_name=tg_user.get("last_name"),
-            language_code=tg_user.get("language_code"),
-            initial_balance=0.0,
-        )
+    if not bot_token:
+        raise PermissionError("TELEGRAM_BOT_TOKEN manquant")
+    if not init_data:
+        raise PermissionError("Authentification Telegram requise")
 
-    if _dev_auth_enabled():
-        raw = request.headers.get("X-Dev-Telegram-Id") or "1"
-        try:
-            tid = int(raw)
-        except ValueError:
-            tid = 1
-        return users_repo.upsert_from_telegram(
-            telegram_id=tid,
-            username="dev",
-            first_name="Dev",
-            last_name="User",
-            language_code="fr",
-            initial_balance=0.0,
-        )
-
-    raise PermissionError("Authentification Telegram requise")
+    tg_user = validate_webapp_init_data(init_data, bot_token)
+    return users_repo.upsert_from_telegram(
+        telegram_id=int(tg_user["id"]),
+        username=tg_user.get("username"),
+        first_name=tg_user.get("first_name"),
+        last_name=tg_user.get("last_name"),
+        language_code=tg_user.get("language_code"),
+        initial_balance=0.0,
+    )
 
 
 def require_telegram_user(view: Callable):

@@ -104,6 +104,21 @@ def list_user_paiements(user_id: int, *, limit: int = 50) -> List[Dict[str, Any]
         return rows
 
 
+def count_open_demandes(user_id: int) -> int:
+    """DRAFT + PENDING non traitees (anti-spam recharges)."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*)::int AS n
+            FROM paiement_demande
+            WHERE user_id = %s AND status IN ('DRAFT', 'PENDING')
+            """,
+            (int(user_id),),
+        )
+        row = cur.fetchone()
+        return int(row["n"] or 0) if row else 0
+
+
 def create_demande(user_id: int, moyen_id: int) -> Optional[Dict[str, Any]]:
     moyen = get_moyen(moyen_id)
     if not moyen:
@@ -157,6 +172,72 @@ def get_demande_by_id(demande_id: int) -> Optional[Dict[str, Any]]:
         )
         row = cur.fetchone()
         return _demande_row(row) if row else None
+
+
+def _client_name(row: Any) -> str:
+    parts = [
+        (row.get("first_name") or "").strip(),
+        (row.get("last_name") or "").strip(),
+    ]
+    name = " ".join(p for p in parts if p)
+    if name:
+        return name
+    uname = (row.get("username") or "").strip()
+    if uname:
+        return f"@{uname}"
+    uid = row.get("user_id")
+    return f"User #{uid}" if uid is not None else "Client"
+
+
+def list_pending_for_admin(limit: int = 100) -> List[Dict[str, Any]]:
+    """File admin : demandes de recharge PENDING (label « nom - id »)."""
+    limit = max(1, min(int(limit or 100), 200))
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                d.id,
+                d.user_id,
+                d.montant,
+                d.moyen_nom,
+                d.finalized_at,
+                d.created_at,
+                u.first_name,
+                u.last_name,
+                u.username,
+                (
+                    SELECT COUNT(*)::int FROM paiement_preuve p WHERE p.demande_id = d.id
+                ) AS preuve_count
+            FROM paiement_demande d
+            LEFT JOIN users u ON u.id = d.user_id
+            WHERE d.status = 'PENDING'
+            ORDER BY d.finalized_at ASC NULLS LAST, d.created_at ASC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        out = []
+        for r in cur.fetchall() or []:
+            name = _client_name(r)
+            did = int(r["id"])
+            out.append(
+                {
+                    "id": did,
+                    "userId": int(r["user_id"]) if r.get("user_id") else None,
+                    "clientName": name,
+                    "label": f"{name} - {did}",
+                    "montant": _f(r.get("montant")),
+                    "moyenNom": r.get("moyen_nom") or "",
+                    "preuveCount": int(r["preuve_count"] or 0),
+                    "finalizedAt": r["finalized_at"].isoformat()
+                    if r.get("finalized_at")
+                    else None,
+                    "createdAt": r["created_at"].isoformat()
+                    if r.get("created_at")
+                    else None,
+                }
+            )
+        return out
 
 
 def set_montant(demande_id: int, user_id: int, montant: float) -> Optional[Dict[str, Any]]:

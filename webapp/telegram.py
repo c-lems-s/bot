@@ -1,4 +1,4 @@
-"""Telegram Bot API — envoi messages / photos / callbacks paiement."""
+"""Telegram Bot API — envoi messages / photos (bot /actif, notifs user)."""
 
 from __future__ import annotations
 
@@ -145,19 +145,6 @@ def edit_message_text(
     return api_call("editMessageText", **payload)
 
 
-def edit_message_reply_markup(
-    chat_id: int,
-    message_id: int,
-    reply_markup: Optional[Dict[str, Any]] = None,
-) -> Optional[Dict[str, Any]]:
-    return api_call(
-        "editMessageReplyMarkup",
-        chat_id=int(chat_id),
-        message_id=int(message_id),
-        reply_markup=reply_markup or {"inline_keyboard": []},
-    )
-
-
 def answer_callback_query(
     callback_query_id: str,
     *,
@@ -178,3 +165,32 @@ def get_updates(*, offset: Optional[int] = None, timeout: int = 25) -> List[Dict
         payload["offset"] = int(offset)
     result = api_call("getUpdates", **payload)
     return result if isinstance(result, list) else []
+
+
+def set_webhook(
+    url: str,
+    *,
+    secret_token: Optional[str] = None,
+    drop_pending_updates: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Enregistre l'URL webhook Bot API."""
+    payload: Dict[str, Any] = {
+        "url": str(url).strip(),
+        "drop_pending_updates": bool(drop_pending_updates),
+        "allowed_updates": ["message", "callback_query"],
+    }
+    secret = (secret_token or "").strip()
+    if secret:
+        payload["secret_token"] = secret
+    return api_call("setWebhook", **payload)
+
+
+def delete_webhook(*, drop_pending_updates: bool = False) -> Optional[Dict[str, Any]]:
+    return api_call(
+        "deleteWebhook",
+        drop_pending_updates=bool(drop_pending_updates),
+    )
+
+
+def get_webhook_info() -> Optional[Dict[str, Any]]:
+    return api_call("getWebhookInfo")

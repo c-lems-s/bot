@@ -227,6 +227,124 @@
       <h2 class="screen-title">User info</h2>
       <div id="admin-user-box" class="info-card"></div>
     </section>
+
+    <!-- Paiement (admin) — file -->
+    <section class="screen" id="screen-paiement">
+      <h2 class="screen-title">Paiement</h2>
+      <p class="info-note admin-only-hint">File d'attente — recharges en attente.</p>
+      <div id="admin-paiements-list" class="queue-list"></div>
+      <div id="admin-paiements-empty" class="empty-hint" hidden>File vide.</div>
+    </section>
+
+    <!-- Paiement (admin) — detail -->
+    <section class="screen" id="screen-paiement-detail">
+      <button class="back-btn" id="admin-paiement-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>File d'attente</span>
+      </button>
+      <h2 class="screen-title">Detail paiement</h2>
+      <div id="admin-paiement-detail" class="info-card"></div>
+      <div id="admin-paiement-preuves" class="admin-preuves"></div>
+      <button class="secondary-btn" id="admin-paiement-user-btn" type="button">User info</button>
+      <button class="primary-btn" id="admin-paiement-accept" type="button">Accepter</button>
+      <button class="danger-btn" id="admin-paiement-reject" type="button">Refuser</button>
+    </section>
+
+    <!-- Paiement (admin) — user info -->
+    <section class="screen" id="screen-paiement-user">
+      <button class="back-btn" id="admin-paiement-user-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Retour detail</span>
+      </button>
+      <h2 class="screen-title">User info</h2>
+      <div id="admin-paiement-user-box" class="info-card"></div>
+    </section>
+
+    <!-- Staff (admin) -->
+    <section class="screen" id="screen-staff">
+      <h2 class="screen-title">Staff</h2>
+      <p class="info-note admin-only-hint">Droits paiement / commandes et journal d'actions.</p>
+
+      <h3 class="section-subtitle">Equipe</h3>
+      <div id="staff-list" class="queue-list"></div>
+      <div id="staff-empty" class="empty-hint" hidden>Aucun staff.</div>
+
+      <h3 class="section-subtitle">Ajouter / modifier</h3>
+      <div class="notif-search-row">
+        <input class="field-input" id="staff-user-q" type="search" placeholder="Rechercher un user…" autocomplete="off" />
+        <button class="secondary-btn notif-search-btn" id="staff-user-search" type="button">Chercher</button>
+      </div>
+      <div id="staff-user-pick" class="notif-user-list"></div>
+      <div id="staff-edit-box" class="gestion-form" hidden>
+        <p class="info-note" id="staff-edit-label">—</p>
+        <label class="field-label gestion-check-row">
+          <input type="checkbox" id="staff-can-paiements" />
+          Acces Paiement
+        </label>
+        <label class="field-label gestion-check-row">
+          <input type="checkbox" id="staff-can-commandes" />
+          Acces Commande
+        </label>
+        <button class="primary-btn" id="staff-save-btn" type="button">Enregistrer</button>
+        <button class="danger-btn" id="staff-remove-btn" type="button" hidden>Retirer le staff</button>
+        <button class="secondary-btn" id="staff-cancel-edit" type="button">Annuler</button>
+      </div>
+
+      <h3 class="section-subtitle">Journal</h3>
+      <button class="secondary-btn" id="staff-logs-refresh" type="button">Rafraichir le journal</button>
+      <div id="staff-logs" class="staff-logs"></div>
+    </section>
+
+    <!-- Notification (admin) -->
+    <section class="screen" id="screen-notification">
+      <h2 class="screen-title">Notification</h2>
+      <p class="info-note admin-only-hint">Envoyer un message Telegram aux users cibles.</p>
+
+      <label class="field-label" for="notif-message">Message</label>
+      <textarea class="field-input field-textarea" id="notif-message" rows="5" placeholder="Votre message…"></textarea>
+
+      <label class="field-label" for="notif-photos">Photos (debut du message)</label>
+      <input class="field-input" id="notif-photos" type="file" accept="image/*" multiple />
+      <div id="notif-photos-preview" class="notif-photos-preview"></div>
+
+      <h3 class="section-subtitle">Cible</h3>
+      <div id="notif-criteria" class="notif-criteria"></div>
+      <div id="notif-params" class="notif-params" hidden></div>
+      <p class="info-note" id="notif-target-summary">Aucun critere selectionne.</p>
+      <button class="secondary-btn" id="notif-preview-btn" type="button">Apercu destinataires</button>
+
+      <label class="field-label" for="notif-user-q">Ou choisir des users</label>
+      <div class="notif-search-row">
+        <input class="field-input" id="notif-user-q" type="search" placeholder="Telegram / username…" autocomplete="off" />
+        <button class="secondary-btn notif-search-btn" id="notif-user-search" type="button">Chercher</button>
+      </div>
+      <div id="notif-user-list" class="notif-user-list"></div>
+      <button class="secondary-btn" id="notif-clear-users" type="button">Vider selection manuelle</button>
+
+      <button class="primary-btn" id="notif-send-btn" type="button">Envoyer</button>
+      <div id="notif-status" class="info-note" hidden></div>
+    </section>
+
+    <!-- Gestion (admin) — hub -->
+    <section class="screen" id="screen-gestion">
+      <h2 class="screen-title">Gestion</h2>
+      <p class="info-note admin-only-hint">Tables et variables du shop.</p>
+      <div id="gestion-resources" class="gestion-resources"></div>
+      <div id="gestion-hub-empty" class="empty-hint" hidden>Chargement…</div>
+    </section>
+
+    <!-- Gestion (admin) — ressource -->
+    <section class="screen" id="screen-gestion-resource">
+      <button class="back-btn" id="gestion-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Gestion</span>
+      </button>
+      <h2 class="screen-title" id="gestion-resource-title">—</h2>
+      <p class="info-note" id="gestion-resource-desc"></p>
+      <div id="gestion-toolbar" class="gestion-toolbar" hidden></div>
+      <div id="gestion-body"></div>
+      <div id="gestion-empty" class="empty-hint" hidden></div>
+    </section>
   </main>
 
   <!-- ===================== MODALE MOYENS DE PAIEMENT ===================== -->
@@ -272,6 +390,24 @@
     </div>
   </div>
 
+  <!-- Menu admin — notif plein ecran -->
+  <div class="points-limit-overlay" id="admin-menu-overlay" hidden>
+    <button class="points-limit-close" id="admin-menu-close" aria-label="Fermer" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div class="points-limit-panel admin-menu-panel">
+      <p class="admin-menu-title">Admin</p>
+      <p class="admin-menu-hint">Choisissez une rubrique.</p>
+      <div class="admin-menu-list">
+        <button type="button" class="admin-menu-item" data-admin-section="commande" data-admin-need="commandes">Commande</button>
+        <button type="button" class="admin-menu-item" data-admin-section="paiement" data-admin-need="paiements">Paiement</button>
+        <button type="button" class="admin-menu-item" data-admin-section="gestion" data-admin-need="gestion">Gestion</button>
+        <button type="button" class="admin-menu-item" data-admin-section="notification" data-admin-need="notification">Notification</button>
+        <button type="button" class="admin-menu-item" data-admin-section="staff" data-admin-need="staff">Staff</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div id="toast" class="toast" hidden></div>
 
@@ -314,11 +450,12 @@
       </span>
       <span>SAV</span>
     </button>
-    <button class="nav-item nav-admin-only" data-nav="commande" id="nav-commande" hidden>
+    <button class="nav-item nav-admin-only" data-nav="admin" id="nav-admin" hidden>
       <span class="nav-ic">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 5-3 8-7 9-4-1-7-4-7-9V7l7-4z"/><path d="M9.5 12l1.5 1.5L14.5 10"/></svg>
+        <span class="nav-badge" id="nav-admin-badge" hidden>0</span>
       </span>
-      <span>Commande</span>
+      <span>Admin</span>
     </button>
   </nav>
 

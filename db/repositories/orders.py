@@ -168,32 +168,6 @@ def create_order(
         return order_id
 
 
-def update_status(order_uuid: str, status: str) -> int:
-    if not order_uuid or not status:
-        return 0
-    status = status.upper().strip()
-    with get_cursor() as cur:
-        if status == "CHECKED_IN":
-            cur.execute(
-                """
-                UPDATE orders
-                SET status = %s, checked_in_at = NOW()
-                WHERE order_uuid = %s
-                """,
-                (status, str(order_uuid)),
-            )
-        else:
-            cur.execute(
-                """
-                UPDATE orders
-                SET status = %s
-                WHERE order_uuid = %s
-                """,
-                (status, str(order_uuid)),
-            )
-        return cur.rowcount or 0
-
-
 def list_queued_for_admin(limit: int = 100) -> List[Dict[str, Any]]:
     """File admin : commandes en cours (terminer=false)."""
     limit = max(1, min(int(limit or 100), 200))
@@ -245,24 +219,6 @@ def get_order_by_id(order_id: int) -> Optional[Dict[str, Any]]:
             WHERE id = %s
             """,
             (int(order_id),),
-        )
-        r = cur.fetchone()
-        if not r:
-            return None
-        return _order_dict(r, items=_items_for(cur, int(r["id"])))
-
-
-def get_order(order_uuid: str) -> Optional[Dict[str, Any]]:
-    if not order_uuid:
-        return None
-    with get_cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT {_ORDER_COLS}
-            FROM orders
-            WHERE order_uuid = %s
-            """,
-            (str(order_uuid),),
         )
         r = cur.fetchone()
         if not r:

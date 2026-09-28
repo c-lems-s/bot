@@ -1,5 +1,5 @@
 """
-Configuration KFC globale — lue depuis la table Postgres `config` (id=1).
+Configuration shop — lue depuis la table Postgres `config` (id=1).
 
 Plus de fichier config.json au runtime.
 Pour importer un ancien config.json une fois :
@@ -51,12 +51,6 @@ def load_config(*, force: bool = False) -> Dict[str, Any]:
         reduction = 100.0
 
     _CACHE = {
-        "account_id": row.get("account_id") or "",
-        "authorization": row.get("authorization") or "",
-        "cookies": row.get("cookies") or {},
-        "recaptcha_token": row.get("recaptcha_token") or "",
-        "enable_analytics": bool(row.get("enable_analytics", False)),
-        "balance": float(row.get("balance") if row.get("balance") is not None else 0.98),
         "currency": row.get("currency") or "EUR",
         "reduction": max(0.0, min(100.0, reduction)),
         "version": str(row.get("version") or "1"),
@@ -65,36 +59,6 @@ def load_config(*, force: bool = False) -> Dict[str, Any]:
         "prochaine_heure": row.get("prochaine_heure"),
     }
     return _CACHE
-
-
-def get_account_id() -> str:
-    return load_config().get("account_id", "") or ""
-
-
-def get_authorization() -> str:
-    return load_config().get("authorization", "") or ""
-
-
-def get_cookies() -> Dict[str, str]:
-    raw = load_config().get("cookies", {}) or {}
-    return {str(k): str(v) for k, v in raw.items()}
-
-
-def get_recaptcha_token() -> str:
-    """Jeton reCAPTCHA manuel (fallback si le bypass auto echoue)."""
-    return load_config().get("recaptcha_token", "") or ""
-
-
-def analytics_enabled() -> bool:
-    return bool(load_config().get("enable_analytics", False))
-
-
-def get_balance() -> float:
-    """Solde de depart pour nouveaux users (seed), lu depuis table config."""
-    try:
-        return float(load_config().get("balance", 0.98))
-    except (RuntimeError, ValueError, TypeError):
-        return 0.98
 
 
 def get_currency() -> str:
