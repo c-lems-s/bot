@@ -71,7 +71,11 @@ def main(argv: list[str] | None = None) -> int:
 
     base = (args.url or _public_base()).strip()
     if not base:
-        print("[-] URL manquante : --url ou PUBLIC_BASE_URL / WEBAPP_URL")
+        print(
+            "[-] URL manquante : PUBLIC_BASE_URL, WEBAPP_URL ou RAILWAY_PUBLIC_DOMAIN. "
+            "Railway → service web → Settings → Networking → Generate Domain, "
+            "puis Variables : PUBLIC_BASE_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}"
+        )
         return 1
     if not base.startswith("https://"):
         print("[-] L'URL webhook doit etre en https://")

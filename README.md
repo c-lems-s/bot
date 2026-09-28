@@ -185,7 +185,7 @@ Le repo est prêt (`Procfile`, `railway.toml`, gunicorn, `/health`).
 | `TELEGRAM_BOT_TOKEN` | token BotFather |
 | `TELEGRAM_WEBHOOK` | `1` |
 | `TELEGRAM_WEBHOOK_SECRET` | longue chaîne aléatoire |
-| `PUBLIC_BASE_URL` | `https://<ton-app>.up.railway.app` (après 1er deploy) |
+| `PUBLIC_BASE_URL` | `https://${{RAILWAY_PUBLIC_DOMAIN}}` (après Generate Domain) |
 | `SET_WEBHOOK_ON_BOOT` | `1` (enregistre le webhook au démarrage) |
 | `ADMIN_TELEGRAM_ID` | ton id Telegram numérique (seed `config.admin`) |
 | `UPLOADS_ROOT` | `/data/uploads` (si volume monté, voir ci-dessous) |
@@ -231,20 +231,24 @@ Sans ça, les logs montrent :
 
 Boot OK : `DATABASE_URL present (host=….railway.internal)` puis gunicorn.
 
-4. **Volume uploads** (preuves paiement + photos notif) — sinon les fichiers disparaissent à chaque redeploy :  
+4. **Domaine public + webhook Telegram** (sinon `URL manquante` au boot) :  
+   - Service web → **Settings** → **Networking** → **Generate Domain**  
+   - **Variables** → ajouter :
+     ```text
+     PUBLIC_BASE_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}
+     SET_WEBHOOK_ON_BOOT=1
+     TELEGRAM_WEBHOOK=1
+     TELEGRAM_WEBHOOK_SECRET=<longue-chaine-aleatoire>
+     ```
+   - Redeploy → boot doit afficher `[+] Webhook OK`
+5. **Volume uploads** (preuves paiement + photos notif) — sinon les fichiers disparaissent à chaque redeploy :  
    - Service web → **Volumes** → Add volume  
    - Mount path : `/data/uploads`  
    - Variable : `UPLOADS_ROOT=/data/uploads`  
-5. **Deploy** — start command (déjà dans `railway.toml` / `Procfile`) :  
-   `python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app`  
 6. Vérifier santé :  
-   - `https://<app>/health` → `{"ok": true, "env": "cloud"}`  
-   - `https://<app>/health?deep=1` → DB + uploads `writable`  
-   - ou en local : `PUBLIC_BASE_URL=https://… python -m webapp.smoke_deploy --deep`  
-7. **BotFather** → Menu Button / Mini App → URL = `PUBLIC_BASE_URL`.  
-8. Si le webhook n’est pas auto :  
-   `PUBLIC_BASE_URL=https://… python -m webapp.set_webhook`  
-   (ou `--info` / `--delete`).
+   - `https://<domaine>/health` → `{"ok": true, "env": "cloud"}`  
+   - `https://<domaine>/health?deep=1` → DB + uploads `writable`  
+7. **BotFather** → Menu Button / Mini App → URL = le domaine généré (`https://….up.railway.app`).
 
 Start manuel équivalent :
 
