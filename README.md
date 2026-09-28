@@ -174,8 +174,9 @@ cloudflare\start-quick.bat
 Le repo est prêt (`Procfile`, `railway.toml`, gunicorn, `/health`).  
 À faire une fois dans le dashboard Railway :
 
-1. **New Project** → Deploy from GitHub (ce repo / branche).  
-2. **Add Plugin / Database** → **PostgreSQL** (lie au service web → injecte `DATABASE_URL`).  
+1. **New Project** → Deploy from GitHub (ce repo).  
+   Déployez la branche qui contient le boot cloud (ex. PR `cursor/webapp-only-…`), pas un `main` sans `DATABASE_URL`.  
+2. **Add Database** → **PostgreSQL** dans le **même projet** que le service web.  
 3. **Variables** du service web :
 
 | Variable | Valeur |
@@ -191,11 +192,18 @@ Le repo est prêt (`Procfile`, `railway.toml`, gunicorn, `/health`).
 
 `DATABASE_URL` n’est **pas** magique : après avoir créé Postgres, il faut le **référencer** dans le service web :
 
-1. Service **web** → **Variables** → **Add Variable** → **Add Reference**  
+1. Service **web** (pas Postgres) → **Variables** → **New Variable** → **Add Reference**  
 2. Choisir le service **Postgres** → variable `DATABASE_URL`  
-3. Redeploy  
+3. **Redeploy** le service web  
 
-Sans ça, le boot affiche `localhost:5432 Connection refused`.
+Sans ça, les logs montrent exactement :
+
+```text
+[boot] APP_ENV=cloud
+[-] Boot DB impossible : … localhost … port 5432 … Connection refused
+```
+
+Après correction, le boot doit logger `DATABASE_URL present (host=….railway.internal)` (ou host Railway), puis démarrer gunicorn.
 
 4. **Volume uploads** (preuves paiement + photos notif) — sinon les fichiers disparaissent à chaque redeploy :  
    - Service web → **Volumes** → Add volume  
@@ -262,6 +270,7 @@ KFCPerso/
 |----------|--------|
 | `Connexion PostgreSQL impossible` | Postgres démarré ? Mot de passe `.env` ? `python -m db.ensure_db` |
 | Railway : SSL / connection refused | `DATABASE_URL` lié ? `sslmode=require` ajouté auto en cloud |
+| Railway : `localhost:5432 Connection refused` | Postgres non lié : Variables → Add Reference → `Postgres.DATABASE_URL` |
 | Railway : healthcheck fail | `GET /health` doit répondre 200 |
 | Preuves / photos perdues après deploy | Volume `/data/uploads` + `UPLOADS_ROOT=/data/uploads` |
 | `/health?deep=1` uploads KO | Droits d’écriture sur le volume ; chemin `UPLOADS_ROOT` |

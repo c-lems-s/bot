@@ -8,26 +8,22 @@ from __future__ import annotations
 
 import os
 import sys
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from webapp.env import app_env, is_cloud, should_create_database  # noqa: E402
+from webapp.env import app_env, has_database_url, is_cloud, should_create_database  # noqa: E402
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
 
 
 def prepare_runtime() -> None:
     """Migrations (+ creation DB locale si besoin). Idempotent."""
     print(f"[boot] APP_ENV={app_env()}")
     _log_db_config()
-
-    if is_cloud() and not has_database_url():
-        raise RuntimeError(
-            "DATABASE_URL manquant en cloud. "
-            "Sur Railway : ajoutez Postgres, puis Variables → "
-            "Add variable reference → Postgres → DATABASE_URL "
-            "(ou collez ${{Postgres.DATABASE_URL}})."
-        )
+    _assert_cloud_db_ready()
 
     if should_create_database():
         from db.ensure_db import ensure_database
@@ -51,24 +47,73 @@ def prepare_runtime() -> None:
     _maybe_set_webhook()
 
 
+def _database_url_host() -> str | None:
+    """Host extrait de DATABASE_URL (sans secrets), ou None si absent/invalide."""
+    raw = (os.getenv("DATABASE_URL") or "").strip()
+    if not raw:
+        return None
+    try:
+        # postgres://user:pass@host:port/db — urlparse gère aussi postgresql://
+        parsed = urlparse(raw)
+        if parsed.hostname:
+            return parsed.hostname
+        # Fallback si URL non standard
+        after_at = raw.split("@", 1)[1] if "@" in raw else raw
+        hostport = after_at.split("/", 1)[0]
+        return hostport.split(":")[0] or None
+    except Exception:
+        return None
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    if not host:
+        return False
+    h = host.strip().lower().strip("[]")
+    return h in _LOOPBACK_HOSTS or h.startswith("127.")
+
+
+def _assert_cloud_db_ready() -> None:
+    """En cloud, refuse le demarrage sans DATABASE_URL Postgres distant."""
+    if not is_cloud():
+        return
+
+    if not has_database_url():
+        raise RuntimeError(
+            "DATABASE_URL manquant en cloud. "
+            "Sur Railway : ajoutez Postgres, puis Variables → "
+            "Add Variable Reference → Postgres → DATABASE_URL "
+            "(ou collez ${{Postgres.DATABASE_URL}}). "
+            "Sans ça le boot tombe sur localhost:5432."
+        )
+
+    host = _database_url_host()
+    if _is_loopback_host(host):
+        raise RuntimeError(
+            f"DATABASE_URL pointe vers {host!r} (loopback) en cloud. "
+            "Ce n'est pas la base Railway. "
+            "Variables → Add Variable Reference → Postgres.DATABASE_URL, "
+            "puis redeploy."
+        )
+
+
 def _log_db_config() -> None:
     """Log non sensible de la config DB (aide debug Railway)."""
     if has_database_url():
-        raw = (os.getenv("DATABASE_URL") or "").strip()
-        # Masquer user/pass, garder le host si possible
-        host = "?"
-        try:
-            # postgresql://user:pass@host:port/db
-            after_at = raw.split("@", 1)[1] if "@" in raw else raw
-            host = after_at.split("/", 1)[0]
-        except Exception:
-            pass
+        host = _database_url_host() or "?"
         print(f"[boot] DATABASE_URL present (host={host})")
+        if is_cloud() and _is_loopback_host(host):
+            print("[boot] ATTENTION: host loopback en cloud — connexion impossible")
     else:
+        db_host = os.getenv("DB_HOST", "localhost")
         print(
             "[boot] DATABASE_URL absent — "
-            f"fallback DB_HOST={os.getenv('DB_HOST', 'localhost')!r}"
+            f"fallback DB_HOST={db_host!r}"
         )
+        if is_cloud():
+            print(
+                "[boot] ATTENTION cloud: sans DATABASE_URL → "
+                "Connection refused sur localhost:5432"
+            )
 
 
 def _ensure_uploads() -> None:
@@ -116,7 +161,16 @@ def main() -> None:
     except Exception as e:
         print(f"[-] Boot DB impossible : {e}")
         if is_cloud():
-            print("    Verifiez DATABASE_URL et que la base Railway est provisionnee.")
+            print("    Cause frequente : Postgres non lie au service web.")
+            print("    Railway → service web → Variables → Add Variable Reference")
+            print("    → choisissez le service Postgres → DATABASE_URL")
+            print("    Puis Redeploy (Settings → Redeploy).")
+            if not has_database_url():
+                print("    (DATABASE_URL est actuellement VIDE dans ce container)")
+            else:
+                host = _database_url_host()
+                if _is_loopback_host(host):
+                    print(f"    (DATABASE_URL pointe vers {host!r} — incorrect en cloud)")
         else:
             print("    Verifiez .env puis : python -m db.ensure_db")
         raise SystemExit(1) from e
