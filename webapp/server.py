@@ -48,13 +48,17 @@ from db.repositories import users as users_repo  # noqa: E402
 from webapp.auth import require_telegram_user  # noqa: E402
 from webapp.boot import prepare_runtime  # noqa: E402
 from webapp.env import app_env, bind_host, is_cloud, telegram_webhook_enabled  # noqa: E402
+from webapp.paths import ensure_uploads_dirs, paiements_uploads_dir  # noqa: E402
 from webapp import session_store  # noqa: E402
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "paiements")
 MAX_PREUVE_BYTES = 8 * 1024 * 1024
 MAX_PREUVES_PAR_DEMANDE = 10
 MAX_DRAFT_TOPUPS = 3
+
+
+def _paiements_dir() -> str:
+    return str(paiements_uploads_dir())
 
 
 def _sniff_preuve_type(raw: bytes):
@@ -394,8 +398,34 @@ def index():
 
 @app.route("/health")
 def api_health():
-    """Healthcheck infra (Railway / reverse-proxy) — pas d'auth."""
-    return jsonify({"ok": True, "env": app_env()})
+    """Healthcheck infra (Railway / reverse-proxy) — pas d'auth.
+
+    ``?deep=1`` verifie aussi Postgres + ecriture uploads.
+    """
+    payload = {"ok": True, "env": app_env()}
+    deep = (request.args.get("deep") or "").strip() in ("1", "true", "yes")
+    if not deep:
+        return jsonify(payload)
+
+    # DB
+    db_ok = False
+    db_err = None
+    try:
+        from db.connection import get_cursor
+
+        with get_cursor() as cur:
+            cur.execute("SELECT 1 AS n")
+            cur.fetchone()
+        db_ok = True
+    except Exception as e:
+        db_err = str(e)
+
+    uploads = ensure_uploads_dirs()
+    payload["db"] = {"ok": db_ok, "error": db_err}
+    payload["uploads"] = uploads
+    payload["ok"] = bool(db_ok and uploads.get("writable"))
+    status = 200 if payload["ok"] else 503
+    return jsonify(payload), status
 
 
 @app.route("/static/<path:path>")
@@ -543,7 +573,7 @@ def api_wallet_topup_preuve(demande_id: int):
             {"error": f"Maximum {MAX_PREUVES_PAR_DEMANDE} preuves par demande."}
         ), 409
 
-    dest_dir = os.path.join(UPLOADS_DIR, str(demande_id))
+    dest_dir = os.path.join(_paiements_dir(), str(demande_id))
     os.makedirs(dest_dir, exist_ok=True)
 
     added = []
@@ -1171,7 +1201,7 @@ def api_admin_paiement_preuve_file(demande_id: int, preuve_id: int):
     stored = cible.get("storedName") or ""
     if not stored or "/" in stored or "\\" in stored or ".." in stored:
         return jsonify({"error": "Fichier invalide"}), 400
-    path = os.path.join(UPLOADS_DIR, str(int(demande_id)), stored)
+    path = os.path.join(_paiements_dir(), str(int(demande_id)), stored)
     if not os.path.isfile(path):
         return jsonify({"error": "Fichier introuvable"}), 404
     mime = (cible.get("mime") or "").strip() or "application/octet-stream"

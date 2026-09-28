@@ -1,5 +1,10 @@
 # Railway — https://docs.railway.app/reference/config-as-code
 # Le service Postgres doit etre lie (injecte DATABASE_URL).
+#
+# Volume uploads (preuves / photos notif) :
+#   1. Service web → Settings → Volumes → Add volume
+#   2. Mount path : /data/uploads
+#   3. Variable   : UPLOADS_ROOT=/data/uploads
 
 [build]
 builder = "NIXPACKS"

@@ -33,8 +33,18 @@ def prepare_runtime() -> None:
         init_db()
         migrate()
 
+    _ensure_uploads()
     _maybe_seed_admin()
     _maybe_set_webhook()
+
+
+def _ensure_uploads() -> None:
+    from webapp.paths import ensure_uploads_dirs, uploads_root
+
+    info = ensure_uploads_dirs()
+    print(f"[boot] uploads root={uploads_root()} writable={info.get('writable')}")
+    for err in info.get("errors") or []:
+        print(f"[boot] uploads warn: {err}")
 
 
 def _maybe_seed_admin() -> None:

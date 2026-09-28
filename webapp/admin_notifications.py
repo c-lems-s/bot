@@ -16,12 +16,10 @@ from db.connection import get_cursor
 from webapp import telegram as tg
 from webapp.access import require_full_admin
 from webapp.auth import require_telegram_user
+from webapp.paths import notifications_uploads_dir
 
 log = logging.getLogger(__name__)
 
-UPLOADS_NOTIF_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "uploads", "notifications"
-)
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
 MAX_PHOTOS = 10
 MAX_MESSAGE_LEN = 4000
@@ -403,8 +401,9 @@ def _sniff_image(raw: bytes) -> Optional[Tuple[str, str]]:
 
 
 def _save_photos(files) -> List[str]:
-    os.makedirs(UPLOADS_NOTIF_DIR, exist_ok=True)
-    batch = os.path.join(UPLOADS_NOTIF_DIR, uuid.uuid4().hex)
+    root = notifications_uploads_dir()
+    os.makedirs(root, exist_ok=True)
+    batch = os.path.join(str(root), uuid.uuid4().hex)
     os.makedirs(batch, exist_ok=True)
     paths: List[str] = []
     for f in files[:MAX_PHOTOS]:
