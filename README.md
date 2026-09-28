@@ -190,20 +190,46 @@ Le repo est prêt (`Procfile`, `railway.toml`, gunicorn, `/health`).
 | `ADMIN_TELEGRAM_ID` | ton id Telegram numérique (seed `config.admin`) |
 | `UPLOADS_ROOT` | `/data/uploads` (si volume monté, voir ci-dessous) |
 
-`DATABASE_URL` n’est **pas** magique : après avoir créé Postgres, il faut le **référencer** dans le service web :
+#### Où est `DATABASE_URL` ?
 
-1. Service **web** (pas Postgres) → **Variables** → **New Variable** → **Add Reference**  
-2. Choisir le service **Postgres** → variable `DATABASE_URL`  
-3. **Redeploy** le service web  
+Elle n’apparaît **pas** toute seule sur le service web. Elle est créée sur le service **Postgres**.
 
-Sans ça, les logs montrent exactement :
+**A. Créer Postgres (si absent du canvas)**  
+Canvas du projet → **+ Create** → **Database** → **Add PostgreSQL**.  
+Tu dois voir **deux** boîtes : ton app **et** Postgres.
+
+**B. Voir la valeur (sur Postgres)**  
+Clique la boîte **Postgres** → onglet **Variables** → tu y vois `DATABASE_URL` (et souvent `DATABASE_PUBLIC_URL`, `PGHOST`, …).  
+Ne copie pas forcément la valeur secrète dans le web — préfère une **référence**.
+
+**C. L’injecter dans le service web (obligatoire)**  
+1. Clique la boîte de **ton app** (pas Postgres) → **Variables**  
+2. **New Variable** / **Raw Editor** et ajoute exactement :
+
+```text
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+```
+
+Si ton service s’appelle autrement (ex. `PostgreSQL` ou `Postgres-abc`), adapte le nom :
+
+```text
+DATABASE_URL=${{PostgreSQL.DATABASE_URL}}
+```
+
+Le nom entre `${{…}}` = nom exact de la boîte Postgres sur le canvas (sensible à la casse).
+
+Alternative UI : **Variables** → **Add Variable** → onglet / option **Add Reference** → choisir Postgres → `DATABASE_URL`.
+
+3. **Deploy** / **Redeploy** le service web.
+
+Sans ça, les logs montrent :
 
 ```text
 [boot] APP_ENV=cloud
 [-] Boot DB impossible : … localhost … port 5432 … Connection refused
 ```
 
-Après correction, le boot doit logger `DATABASE_URL present (host=….railway.internal)` (ou host Railway), puis démarrer gunicorn.
+Boot OK : `DATABASE_URL present (host=….railway.internal)` puis gunicorn.
 
 4. **Volume uploads** (preuves paiement + photos notif) — sinon les fichiers disparaissent à chaque redeploy :  
    - Service web → **Volumes** → Add volume  
