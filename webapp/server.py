@@ -706,14 +706,28 @@ def telegram_webhook():
     """Webhook Bot API — secret obligatoire (anti-forgery bot updates)."""
     secret = (os.environ.get("TELEGRAM_WEBHOOK_SECRET") or "").strip()
     if not secret:
+        app.logger.error(
+            "Webhook refuse : TELEGRAM_WEBHOOK_SECRET manquant "
+            "(les commandes bot ne peuvent pas repondre)"
+        )
         return jsonify({"error": "webhook disabled (TELEGRAM_WEBHOOK_SECRET manquant)"}), 503
     got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if not got or got != secret:
+        app.logger.warning("Webhook Telegram secret invalide / absent")
         return jsonify({"error": "forbidden"}), 403
     update = request.get_json(silent=True) or {}
     try:
         from webapp.bot_poll import process_update
 
+        msg = update.get("message") or update.get("edited_message") or {}
+        text = (msg.get("text") or "")[:80]
+        cq = update.get("callback_query") or {}
+        app.logger.info(
+            "Webhook Telegram update_id=%s text=%r callback=%r",
+            update.get("update_id"),
+            text,
+            (cq.get("data") or "")[:80],
+        )
         process_update(update)
     except Exception:
         app.logger.exception("Erreur webhook Telegram")

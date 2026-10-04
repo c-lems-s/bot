@@ -34,19 +34,25 @@ def send_start(chat_id: int, *, url: Optional[str] = None) -> None:
     """Envoie le message de bienvenue (+ bouton web_app si URL connue)."""
     base = (url or public_base_url() or "").strip().rstrip("/")
     if base.startswith("https://"):
-        tg.send_message(
+        result = tg.send_message(
             int(chat_id),
             WELCOME_TEXT,
             reply_markup=_shop_keyboard(base),
         )
+        if result is None:
+            log.error("/start sendMessage echoue (chat_id=%s url=%s)", chat_id, base)
+        else:
+            log.info("/start envoye (chat_id=%s)", chat_id)
         return
     # Sans URL publique : message seul (évite bouton cassé)
     log.warning("/start sans PUBLIC_BASE_URL — bouton boutique omis")
-    tg.send_message(
+    result = tg.send_message(
         int(chat_id),
         WELCOME_TEXT
         + "\n\n<i>Boutique momentanément indisponible (URL non configuree).</i>",
     )
+    if result is None:
+        log.error("/start sendMessage echoue (chat_id=%s, sans URL)", chat_id)
 
 
 def handle_start_command(message: Dict[str, Any]) -> bool:

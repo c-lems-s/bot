@@ -15,3 +15,5 @@ healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
+# TELEGRAM_WEBHOOK=1 + PUBLIC_BASE_URL + TELEGRAM_WEBHOOK_SECRET
+# → le boot enregistre le webhook (sinon /start reste muet).

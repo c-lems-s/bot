@@ -185,8 +185,8 @@ Le repo est prêt (`Procfile`, `railway.toml`, gunicorn, `/health`).
 |----------|--------|
 | `APP_ENV` | `cloud` (optionnel si `RAILWAY_*` détecté) |
 | `TELEGRAM_BOT_TOKEN` | token BotFather |
-| `TELEGRAM_WEBHOOK` | `1` |
-| `TELEGRAM_WEBHOOK_SECRET` | longue chaîne aléatoire |
+| `TELEGRAM_WEBHOOK` | `1` (enregistre le webhook au boot si URL + secret OK) |
+| `TELEGRAM_WEBHOOK_SECRET` | longue chaîne aléatoire (**obligatoire** avec le webhook) |
 | `PUBLIC_BASE_URL` | `https://${{RAILWAY_PUBLIC_DOMAIN}}` (après Generate Domain) |
 | `SET_WEBHOOK_ON_BOOT` | `1` (enregistre le webhook au démarrage) |
 | `ADMIN_TELEGRAM_ID` | ton id Telegram numérique (seed `config.admin`) |
@@ -308,6 +308,7 @@ KFCPerso/
 | Preuves / photos perdues après deploy | Volume `/data/uploads` + `UPLOADS_ROOT=/data/uploads` |
 | `/health?deep=1` uploads KO | Droits d’écriture sur le volume ; chemin `UPLOADS_ROOT` |
 | Webhook Telegram KO | `PUBLIC_BASE_URL` https + `TELEGRAM_WEBHOOK_SECRET` ; `python -m webapp.set_webhook --info` |
+| Bot `/start` muet | Webhook non enregistre alors que `TELEGRAM_WEBHOOK=1` coupe le poll — redeploy avec URL+secret ; logs boot `Telegram ingress` |
 | `401 Authentification Telegram requise` | Ouvrir la Mini App depuis Telegram (initData) |
 | `KFC indisponible` | Resto blacklisté |
 | `Module KFC` / imports | Lancer les commandes **depuis** le dossier `KFCPerso` avec le venv activé |

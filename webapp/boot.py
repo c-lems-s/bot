@@ -45,7 +45,7 @@ def prepare_runtime() -> None:
     _ensure_uploads()
     _maybe_seed_admin()
     _maybe_set_bot_commands()
-    _maybe_set_webhook()
+    _ensure_telegram_ingress()
 
 
 def _database_url_host() -> str | None:
@@ -154,19 +154,28 @@ def _maybe_set_bot_commands() -> None:
         print(f"[boot] Menu commandes ignore : {e}")
 
 
-def _maybe_set_webhook() -> None:
-    """Si SET_WEBHOOK_ON_BOOT=1 + PUBLIC_BASE_URL → enregistre le webhook."""
-    flag = (os.getenv("SET_WEBHOOK_ON_BOOT") or "").strip().lower()
-    if flag not in ("1", "true", "yes"):
-        return
-    try:
-        from webapp.set_webhook import main as webhook_main
+def _ensure_telegram_ingress() -> None:
+    """Webhook si TELEGRAM_WEBHOOK=1, sinon nettoie pour le poll.
 
-        code = webhook_main([])
-        if code != 0:
-            print("[boot] set_webhook ignore / echec (non bloquant)")
+    Avant, le poll etait coupe sans setWebhook → /start muet.
+    """
+    try:
+        from webapp.telegram_ingress import ensure_telegram_ingress
+
+        info = ensure_telegram_ingress()
+        mode = info.get("mode")
+        detail = info.get("detail") or ""
+        if info.get("ok"):
+            print(f"[boot] Telegram ingress OK ({mode}) — {detail}")
+        else:
+            print(f"[boot] Telegram ingress KO ({mode}) — {detail}")
+            print(
+                "    → Sans ingress, /start et /actif ne repondent pas. "
+                "Verifiez PUBLIC_BASE_URL + TELEGRAM_WEBHOOK_SECRET "
+                "ou desactivez TELEGRAM_WEBHOOK pour le poll."
+            )
     except Exception as e:
-        print(f"[boot] set_webhook ignore : {e}")
+        print(f"[boot] Telegram ingress ignore : {e}")
 
 
 def main() -> None:

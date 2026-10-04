@@ -21,9 +21,20 @@ _offset: int | None = None
 
 
 def process_update(update: dict) -> None:
-    if bot_start.process_update(update):
-        return
-    bot_actif.process_update(update)
+    try:
+        if bot_start.process_update(update):
+            log.info("Update consomme par /start")
+            return
+        if bot_actif.process_update(update):
+            log.info("Update consomme par /actif")
+            return
+        msg = update.get("message") or update.get("edited_message") or {}
+        text = (msg.get("text") or "").strip()
+        if text.startswith("/"):
+            log.info("Commande ignoree (non geree) : %r", text[:80])
+    except Exception:
+        log.exception("Erreur process_update")
+        raise
 
 
 def _poll_loop() -> None:
@@ -42,8 +53,11 @@ def _poll_loop() -> None:
             time.sleep(3)
 
 
-def start_polling_thread() -> bool:
-    """Demarre le poll si TELEGRAM_BOT_TOKEN present. Idempotent."""
+def start_polling_thread(*, force: bool = False) -> bool:
+    """Demarre le poll si TELEGRAM_BOT_TOKEN present. Idempotent.
+
+    ``force=True`` : demarre meme si TELEGRAM_WEBHOOK=1 (fallback si webhook vide).
+    """
     global _started
     if _started:
         return True
@@ -52,8 +66,8 @@ def start_polling_thread() -> bool:
         return False
     from webapp.env import telegram_webhook_enabled
 
-    # Desactive si webhook explicite
-    if telegram_webhook_enabled():
+    # Desactive si webhook explicite (sauf fallback force)
+    if telegram_webhook_enabled() and not force:
         log.info("TELEGRAM_WEBHOOK=1 — poll desactive (utilisez /telegram/webhook)")
         return False
     _started = True

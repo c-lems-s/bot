@@ -24,17 +24,11 @@ load_dotenv()
 
 from webapp import telegram as tg  # noqa: E402
 from webapp.env import public_base_url  # noqa: E402
-
-
-def _public_base() -> str:
-    return public_base_url()
-
-
-def _webhook_url(base: str) -> str:
-    base = base.rstrip("/")
-    if base.endswith("/telegram/webhook"):
-        return base
-    return f"{base}/telegram/webhook"
+from webapp.telegram_ingress import (  # noqa: E402
+    ensure_webhook,
+    webhook_endpoint_url,
+    webhook_info,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.info:
-        info = tg.get_webhook_info()
+        info = webhook_info()
         print(info or {"error": "echec getWebhookInfo"})
         return 0 if info is not None else 1
 
@@ -63,7 +57,11 @@ def main(argv: list[str] | None = None) -> int:
         print(ok if ok is not None else {"error": "echec deleteWebhook"})
         return 0 if ok is not None else 1
 
-    base = (args.url or _public_base()).strip()
+    if args.url:
+        # Surcharge temporaire de l'URL publique pour ce run
+        os.environ["PUBLIC_BASE_URL"] = args.url.strip()
+
+    base = public_base_url()
     if not base:
         print(
             "[-] URL manquante : PUBLIC_BASE_URL, WEBAPP_URL ou RAILWAY_PUBLIC_DOMAIN. "
@@ -71,29 +69,18 @@ def main(argv: list[str] | None = None) -> int:
             "puis Variables : PUBLIC_BASE_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}"
         )
         return 1
-    if not base.startswith("https://"):
-        print("[-] L'URL webhook doit etre en https://")
-        return 1
 
-    secret = (os.getenv("TELEGRAM_WEBHOOK_SECRET") or "").strip()
-    if not secret:
-        print("[!] TELEGRAM_WEBHOOK_SECRET vide — recommande en prod")
-
-    hook = _webhook_url(base)
-    print(f"[set_webhook] {hook}")
-    result = tg.set_webhook(
-        hook,
-        secret_token=secret or None,
-        drop_pending_updates=not args.keep_pending,
-    )
-    if not result:
-        print("[-] setWebhook echoue (voir logs)")
+    print(f"[set_webhook] {webhook_endpoint_url(base)}")
+    ok, detail = ensure_webhook(drop_pending=not args.keep_pending)
+    if not ok:
+        print(f"[-] {detail}")
         return 1
-    print("[+] Webhook OK")
-    info = tg.get_webhook_info()
+    print(f"[+] Webhook OK — {detail}")
+    info = webhook_info()
     if info:
-        print(f"    url={info.get('url')}")
         print(f"    pending={info.get('pending_update_count')}")
+        if info.get("last_error_message"):
+            print(f"    last_error={info.get('last_error_message')}")
     return 0
 
 
