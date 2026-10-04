@@ -117,7 +117,64 @@ def _list_articles(limit: int = 200, q: str = "") -> list:
         return rows
 
 
+def _parse_article_raw_line(line: str) -> Dict[str, Any]:
+    """Parse ``"kfc_item_id" "name" "label" price cost``."""
+    s = (line or "").strip()
+    if not s:
+        raise ValueError("ligne brute vide")
+    tokens: list[str] = []
+    i = 0
+    n = len(s)
+    while i < n:
+        while i < n and s[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        if s[i] == '"':
+            i += 1
+            buf: list[str] = []
+            while i < n and s[i] != '"':
+                if s[i] == "\\" and i + 1 < n:
+                    buf.append(s[i + 1])
+                    i += 2
+                    continue
+                buf.append(s[i])
+                i += 1
+            if i >= n or s[i] != '"':
+                raise ValueError('guillemet fermant manquant')
+            i += 1
+            tokens.append("".join(buf))
+        else:
+            start = i
+            while i < n and not s[i].isspace():
+                i += 1
+            tokens.append(s[start:i])
+    if len(tokens) != 5:
+        raise ValueError(
+            'attendu 5 champs : "kfc_item_id" "name" "label" price cost'
+        )
+    try:
+        price = float(tokens[3])
+    except ValueError as e:
+        raise ValueError("price invalide") from e
+    try:
+        cost = int(float(tokens[4]))
+    except ValueError as e:
+        raise ValueError("cost invalide") from e
+    return {
+        "kfc_item_id": tokens[0],
+        "name": tokens[1],
+        "label": tokens[2],
+        "price": price,
+        "cost": cost,
+    }
+
+
 def _upsert_article(data: dict, article_id: Optional[int] = None) -> Dict[str, Any]:
+    raw_line = data.get("raw") or data.get("rawLine") or data.get("raw_line")
+    if isinstance(raw_line, str) and raw_line.strip():
+        data = {**data, **_parse_article_raw_line(raw_line)}
+
     kfc_item_id = str(data.get("kfcItemId") or data.get("kfc_item_id") or "").strip()
     name = str(data.get("name") or "").strip() or None
     label = str(data.get("label") or "").strip()

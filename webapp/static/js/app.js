@@ -2355,6 +2355,71 @@ async function loadGestionConfig() {
   }
 }
 
+function quoteArticleRawField(value) {
+  return `"${String(value ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function formatArticleRawLine(art) {
+  if (!art) return "";
+  const price = art.price != null ? String(art.price) : "";
+  const cost = art.cost != null ? String(art.cost) : "";
+  return [
+    quoteArticleRawField(art.kfcItemId || ""),
+    quoteArticleRawField(art.name || ""),
+    quoteArticleRawField(art.label || ""),
+    price,
+    cost,
+  ].join(" ");
+}
+
+/** Parse `"kfc_item_id" "name" "label" price cost` (guillemets pour les 3 textes). */
+function parseArticleRawLine(line) {
+  const s = String(line || "").trim();
+  if (!s) throw new Error("Ligne brute vide");
+  const tokens = [];
+  let i = 0;
+  while (i < s.length) {
+    while (i < s.length && /\s/.test(s[i])) i += 1;
+    if (i >= s.length) break;
+    if (s[i] === '"') {
+      i += 1;
+      let buf = "";
+      while (i < s.length && s[i] !== '"') {
+        if (s[i] === "\\" && i + 1 < s.length) {
+          buf += s[i + 1];
+          i += 2;
+          continue;
+        }
+        buf += s[i];
+        i += 1;
+      }
+      if (i >= s.length || s[i] !== '"') {
+        throw new Error('Guillemet fermant manquant — ex. "loyalty-3631" "Nom" "label" 1.00 300');
+      }
+      i += 1;
+      tokens.push(buf);
+    } else {
+      const start = i;
+      while (i < s.length && !/\s/.test(s[i])) i += 1;
+      tokens.push(s.slice(start, i));
+    }
+  }
+  if (tokens.length !== 5) {
+    throw new Error('Attendu 5 champs : "kfc_item_id" "name" "label" price cost');
+  }
+  const price = Number(tokens[3]);
+  const cost = Number(tokens[4]);
+  if (!Number.isFinite(price)) throw new Error("price invalide");
+  if (!Number.isFinite(cost)) throw new Error("cost invalide");
+  return {
+    kfcItemId: tokens[0],
+    name: tokens[1],
+    label: tokens[2],
+    price,
+    cost,
+  };
+}
+
 async function loadGestionArticles() {
   const toolbar = $("gestion-toolbar");
   if (toolbar) {
@@ -2372,33 +2437,66 @@ async function loadGestionArticles() {
 
   const paintForm = (art) => {
     const isNew = !art || !art.id;
+    const rawPrefill = escapeHtml(formatArticleRawLine(art));
     body.innerHTML = `
       <div class="gestion-form">
-        <label class="field-label" for="g-art-kfc">KFC item id</label>
-        <input class="field-input" id="g-art-kfc" type="text" value="${escapeHtml((art && art.kfcItemId) || "")}" ${isNew ? "" : ""} />
-        <label class="field-label" for="g-art-name">Nom</label>
-        <input class="field-input" id="g-art-name" type="text" value="${escapeHtml((art && art.name) || "")}" />
-        <label class="field-label" for="g-art-label">Label</label>
-        <input class="field-input" id="g-art-label" type="text" value="${escapeHtml((art && art.label) || "")}" />
-        <label class="field-label" for="g-art-price">Prix</label>
-        <input class="field-input" id="g-art-price" type="number" min="0" step="0.01" value="${escapeHtml(art && art.price != null ? String(art.price) : "")}" />
-        <label class="field-label" for="g-art-cost">Points (cost)</label>
-        <input class="field-input" id="g-art-cost" type="number" min="0" step="1" value="${escapeHtml(art && art.cost != null ? String(art.cost) : "")}" />
+        <label class="field-label gestion-check-row" for="g-art-raw-mode">
+          <input id="g-art-raw-mode" type="checkbox" />
+          Formulaire brut
+        </label>
+        <div id="g-art-fields-normal">
+          <label class="field-label" for="g-art-kfc">KFC item id</label>
+          <input class="field-input" id="g-art-kfc" type="text" value="${escapeHtml((art && art.kfcItemId) || "")}" />
+          <label class="field-label" for="g-art-name">Nom</label>
+          <input class="field-input" id="g-art-name" type="text" value="${escapeHtml((art && art.name) || "")}" />
+          <label class="field-label" for="g-art-label">Label</label>
+          <input class="field-input" id="g-art-label" type="text" value="${escapeHtml((art && art.label) || "")}" />
+          <label class="field-label" for="g-art-price">Prix</label>
+          <input class="field-input" id="g-art-price" type="number" min="0" step="0.01" value="${escapeHtml(art && art.price != null ? String(art.price) : "")}" />
+          <label class="field-label" for="g-art-cost">Points (cost)</label>
+          <input class="field-input" id="g-art-cost" type="number" min="0" step="1" value="${escapeHtml(art && art.cost != null ? String(art.cost) : "")}" />
+        </div>
+        <div id="g-art-fields-raw" hidden>
+          <label class="field-label" for="g-art-raw">Ligne brute</label>
+          <textarea class="field-input gestion-raw-input" id="g-art-raw" rows="3" spellcheck="false" placeholder='"loyalty-3631" "Sauce banane XL" "édition spécial" 1.00 300'>${rawPrefill}</textarea>
+          <p class="info-note">Format : "kfc_item_id" "name" "label" price cost</p>
+        </div>
         <button class="primary-btn" id="g-art-save" type="button">${isNew ? "Creer" : "Enregistrer"}</button>
         ${isNew ? "" : '<button class="danger-btn" id="g-art-del" type="button">Supprimer</button>'}
         <button class="secondary-btn" id="g-art-cancel" type="button">Retour liste</button>
       </div>`;
+    const syncMode = () => {
+      const rawOn = !!(($("g-art-raw-mode") || {}).checked);
+      const normal = $("g-art-fields-normal");
+      const rawBox = $("g-art-fields-raw");
+      if (normal) normal.hidden = rawOn;
+      if (rawBox) rawBox.hidden = !rawOn;
+    };
+    const mode = $("g-art-raw-mode");
+    if (mode) mode.onchange = syncMode;
+    syncMode();
     $("g-art-cancel").onclick = () => loadGestionArticles().catch((e) => toast(e.message));
     $("g-art-save").onclick = async () => {
       const btn = $("g-art-save");
       btn.disabled = true;
-      const payload = {
-        kfcItemId: ($("g-art-kfc") || {}).value || "",
-        name: ($("g-art-name") || {}).value || "",
-        label: ($("g-art-label") || {}).value || "",
-        price: Number(($("g-art-price") || {}).value),
-        cost: ($("g-art-cost") || {}).value === "" ? null : Number(($("g-art-cost") || {}).value),
-      };
+      let payload;
+      try {
+        if (($("g-art-raw-mode") || {}).checked) {
+          payload = parseArticleRawLine(($("g-art-raw") || {}).value || "");
+        } else {
+          payload = {
+            kfcItemId: ($("g-art-kfc") || {}).value || "",
+            name: ($("g-art-name") || {}).value || "",
+            label: ($("g-art-label") || {}).value || "",
+            price: Number(($("g-art-price") || {}).value),
+            cost: ($("g-art-cost") || {}).value === "" ? null : Number(($("g-art-cost") || {}).value),
+          };
+        }
+      } catch (e) {
+        toast(e.message || "Ligne brute invalide");
+        btn.disabled = false;
+        return;
+      }
       try {
         if (isNew) await api("/api/admin/gestion/articles", payload);
         else await api(`/api/admin/gestion/articles/${art.id}`, payload, "PATCH");

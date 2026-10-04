@@ -909,6 +909,14 @@ body.autoshop-locked #toast {
   width: 18px;
   height: 18px;
 }
+.gestion-raw-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  min-height: 72px;
+  resize: vertical;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .gestion-row {
   display: flex;
   align-items: center;
