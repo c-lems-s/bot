@@ -194,3 +194,44 @@ def delete_webhook(*, drop_pending_updates: bool = False) -> Optional[Dict[str, 
 
 def get_webhook_info() -> Optional[Dict[str, Any]]:
     return api_call("getWebhookInfo")
+
+
+def set_my_commands(
+    commands: List[Dict[str, str]],
+    *,
+    scope: Optional[Dict[str, Any]] = None,
+    language_code: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Enregistre le menu de commandes BotFather (scopes Telegram)."""
+    payload: Dict[str, Any] = {"commands": commands}
+    if scope is not None:
+        payload["scope"] = scope
+    if language_code:
+        payload["language_code"] = language_code
+    return api_call("setMyCommands", **payload)
+
+
+def delete_my_commands(
+    *,
+    scope: Optional[Dict[str, Any]] = None,
+    language_code: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    payload: Dict[str, Any] = {}
+    if scope is not None:
+        payload["scope"] = scope
+    if language_code:
+        payload["language_code"] = language_code
+    return api_call("deleteMyCommands", **payload)
+
+
+def get_my_commands(
+    *,
+    scope: Optional[Dict[str, Any]] = None,
+    language_code: Optional[str] = None,
+) -> Optional[Any]:
+    payload: Dict[str, Any] = {}
+    if scope is not None:
+        payload["scope"] = scope
+    if language_code:
+        payload["language_code"] = language_code
+    return api_call("getMyCommands", **payload)
