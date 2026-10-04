@@ -59,3 +59,15 @@ def should_create_database() -> bool:
 
 def telegram_webhook_enabled() -> bool:
     return (os.getenv("TELEGRAM_WEBHOOK") or "").strip() in ("1", "true", "True")
+
+
+def public_base_url() -> str:
+    """URL HTTPS publique de la Mini App (PUBLIC_BASE_URL / WEBAPP_URL / Railway)."""
+    for key in ("PUBLIC_BASE_URL", "WEBAPP_URL", "RAILWAY_PUBLIC_DOMAIN"):
+        raw = (os.getenv(key) or "").strip().rstrip("/")
+        if not raw:
+            continue
+        if key == "RAILWAY_PUBLIC_DOMAIN" and not raw.startswith("http"):
+            return f"https://{raw}"
+        return raw
+    return ""

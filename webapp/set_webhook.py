@@ -23,17 +23,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from webapp import telegram as tg  # noqa: E402
+from webapp.env import public_base_url  # noqa: E402
 
 
 def _public_base() -> str:
-    for key in ("PUBLIC_BASE_URL", "WEBAPP_URL", "RAILWAY_PUBLIC_DOMAIN"):
-        raw = (os.getenv(key) or "").strip().rstrip("/")
-        if not raw:
-            continue
-        if key == "RAILWAY_PUBLIC_DOMAIN" and not raw.startswith("http"):
-            return f"https://{raw}"
-        return raw
-    return ""
+    return public_base_url()
 
 
 def _webhook_url(base: str) -> str:

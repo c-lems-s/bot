@@ -3,6 +3,7 @@
 Mini-app Telegram pour commander chez KFC France (catalogue local + solde EUR).
 
 - **Accès web** via Telegram WebApp (auth `initData`)
+- **Bot** : `/start` (bienvenue + bouton « Accéder à la boutique »), `/actif` (admin)
 - **PostgreSQL** : config shop, users, sessions, articles, blacklist, commandes, paiements
 - **Checkout local** : débit solde → commande `QUEUED` (traitement admin)
 
