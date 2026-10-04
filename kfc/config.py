@@ -8,20 +8,31 @@ Pour importer un ancien config.json une fois :
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict
 
+# Cache court : avec plusieurs workers gunicorn, un set_actif sur un worker
+# ne clear pas les autres — un TTL evite un panel /actif bloque (boutons faux).
 _CACHE: Dict[str, Any] | None = None
+_CACHE_AT: float = 0.0
+_CACHE_TTL_SEC = 1.0
 
 
 def clear_cache() -> None:
-    global _CACHE
+    global _CACHE, _CACHE_AT
     _CACHE = None
+    _CACHE_AT = 0.0
 
 
 def load_config(*, force: bool = False) -> Dict[str, Any]:
     """Charge la config depuis Postgres. Raises RuntimeError si absente / DB KO."""
-    global _CACHE
-    if _CACHE is not None and not force:
+    global _CACHE, _CACHE_AT
+    now = time.monotonic()
+    if (
+        not force
+        and _CACHE is not None
+        and (now - _CACHE_AT) < _CACHE_TTL_SEC
+    ):
         return _CACHE
 
     try:
@@ -58,6 +69,7 @@ def load_config(*, force: bool = False) -> Dict[str, Any]:
         "actif": bool(row.get("actif", True)) if row.get("actif") is not None else True,
         "prochaine_heure": row.get("prochaine_heure"),
     }
+    _CACHE_AT = now
     return _CACHE
 
 

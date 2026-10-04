@@ -142,7 +142,25 @@ def edit_message_text(
         payload["parse_mode"] = parse_mode
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
-    return api_call("editMessageText", **payload)
+
+    token = bot_token()
+    if not token:
+        log.warning("TELEGRAM_BOT_TOKEN manquant — envoi ignore (editMessageText)")
+        return None
+    try:
+        r = requests.post(_url("editMessageText"), json=payload, timeout=30)
+        data = r.json() if r.content else {}
+        if data.get("ok"):
+            return data.get("result")
+        desc = str((data.get("description") or "")).lower()
+        # Deja a jour : considere comme succes (evite panel /actif bloque)
+        if "message is not modified" in desc:
+            return {"ok": True, "unchanged": True}
+        log.error("Telegram editMessageText failed: %s", data)
+        return None
+    except Exception as e:
+        log.exception("Telegram editMessageText error: %s", e)
+        return None
 
 
 def answer_callback_query(

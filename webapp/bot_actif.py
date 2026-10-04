@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Set
+from typing import Any, Dict, Optional
 
 from kfc.config import (
+    clear_cache,
     get_prochaine_heure,
     is_admin,
     is_shop_actif,
@@ -16,11 +17,22 @@ from webapp import telegram as tg
 
 log = logging.getLogger(__name__)
 
-# Chats admin en attente d'un texte « prochaine heure »
-_awaiting_heure: Set[int] = set()
+# Marqueur dans le message ForceReply — detecte sur n'importe quel worker.
+_HEURE_MARKER = "#actif_heure"
+_HEURE_PROMPT = (
+    "Envoyez maintenant la <b>prochaine heure d'activite</b> "
+    "(texte libre, ex. <code>demain 18h30</code>).\n"
+    f"<code>{_HEURE_MARKER}</code>"
+)
+
+
+def _refresh_config() -> None:
+    """Force une lecture DB fraiche (multi-workers gunicorn)."""
+    clear_cache()
 
 
 def _status_text() -> str:
+    _refresh_config()
     actif = is_shop_actif()
     etat = "ACTIF (ouvert)" if actif else "INACTIF (ferme)"
     lines = [
@@ -37,6 +49,7 @@ def _status_text() -> str:
 
 
 def _keyboard() -> Dict[str, Any]:
+    _refresh_config()
     actif = is_shop_actif()
     rows = []
     if actif:
@@ -57,6 +70,31 @@ def send_actif_panel(chat_id: int) -> None:
     tg.send_message(int(chat_id), _status_text(), reply_markup=_keyboard())
 
 
+def _refresh_panel(
+    chat_id: Optional[int],
+    message_id: Optional[int],
+) -> None:
+    """Met a jour le message du panel ; si edit echoue → nouveau message."""
+    if chat_id is None:
+        return
+    text = _status_text()
+    markup = _keyboard()
+    if message_id is not None:
+        edited = tg.edit_message_text(
+            int(chat_id),
+            int(message_id),
+            text,
+            reply_markup=markup,
+        )
+        if edited is not None:
+            return
+        log.warning(
+            "editMessageText /actif echoue — renvoi d'un nouveau panel (chat=%s)",
+            chat_id,
+        )
+    send_actif_panel(int(chat_id))
+
+
 def handle_actif_command(message: Dict[str, Any]) -> bool:
     """Traite /actif. Retourne True si consomme."""
     text = (message.get("text") or "").strip()
@@ -74,11 +112,11 @@ def handle_actif_command(message: Dict[str, Any]) -> bool:
     if chat_id is None:
         return True
 
+    _refresh_config()
     if not is_admin(tid):
         tg.send_message(int(chat_id), "Commande reservee a l'administrateur.")
         return True
 
-    _awaiting_heure.discard(int(chat_id))
     send_actif_panel(int(chat_id))
     return True
 
@@ -97,6 +135,7 @@ def handle_actif_callback(cq: Dict[str, Any]) -> bool:
     chat_id = chat.get("id")
     message_id = message.get("message_id")
 
+    _refresh_config()
     if not is_admin(tid):
         tg.answer_callback_query(
             cq_id, text="Reserve a l'administrateur.", show_alert=True
@@ -108,19 +147,15 @@ def handle_actif_callback(cq: Dict[str, Any]) -> bool:
         if parts[1] == "set" and len(parts) >= 3:
             want = parts[2] == "1"
             set_shop_actif(want)
+            _refresh_config()
             tg.answer_callback_query(
                 cq_id,
                 text="Shop ouvert" if want else "Shop ferme",
             )
-            if chat_id and message_id:
-                tg.edit_message_text(
-                    int(chat_id),
-                    int(message_id),
-                    _status_text(),
-                    reply_markup=_keyboard(),
-                )
-            elif chat_id:
-                send_actif_panel(int(chat_id))
+            _refresh_panel(
+                int(chat_id) if chat_id is not None else None,
+                int(message_id) if message_id is not None else None,
+            )
             return True
 
         if parts[1] == "heure":
@@ -131,14 +166,16 @@ def handle_actif_callback(cq: Dict[str, Any]) -> bool:
                     show_alert=True,
                 )
                 return True
-            if chat_id is not None:
-                _awaiting_heure.add(int(chat_id))
             tg.answer_callback_query(cq_id, text="Envoyez l'heure en texte")
             if chat_id is not None:
                 tg.send_message(
                     int(chat_id),
-                    "Envoyez maintenant la <b>prochaine heure d'activite</b> "
-                    "(texte libre, ex. <code>demain 18h30</code>).",
+                    _HEURE_PROMPT,
+                    reply_markup={
+                        "force_reply": True,
+                        "selective": True,
+                        "input_field_placeholder": "ex. demain 18h30",
+                    },
                 )
             return True
     except PermissionError as e:
@@ -153,23 +190,37 @@ def handle_actif_callback(cq: Dict[str, Any]) -> bool:
     return True
 
 
+def _is_heure_reply(message: Dict[str, Any]) -> bool:
+    """True si le message repond au prompt ForceReply #actif_heure."""
+    reply = message.get("reply_to_message") or {}
+    reply_text = reply.get("text") or ""
+    reply_html = reply.get("caption") or ""
+    blob = f"{reply_text}\n{reply_html}"
+    return _HEURE_MARKER in blob or "prochaine heure d'activite" in blob.lower()
+
+
 def handle_actif_heure_message(message: Dict[str, Any]) -> bool:
-    """Si admin attend une heure, enregistre le texte. Retourne True si consomme."""
+    """Enregistre l'heure si reply au prompt admin. True si consomme."""
+    if not _is_heure_reply(message):
+        return False
+
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
-    if chat_id is None or int(chat_id) not in _awaiting_heure:
+    if chat_id is None:
         return False
 
     from_user = message.get("from") or {}
+    _refresh_config()
     if not is_admin(from_user.get("id")):
-        _awaiting_heure.discard(int(chat_id))
         return False
 
     text = (message.get("text") or "").strip()
     if not text or text.startswith("/"):
         return False
+    # Ne pas enregistrer le marqueur lui-meme
+    if text == _HEURE_MARKER:
+        return False
 
-    _awaiting_heure.discard(int(chat_id))
     try:
         if is_shop_actif():
             tg.send_message(
@@ -178,6 +229,7 @@ def handle_actif_heure_message(message: Dict[str, Any]) -> bool:
             )
             return True
         set_prochaine_heure(text)
+        _refresh_config()
         tg.send_message(
             int(chat_id),
             f"Prochaine heure enregistree : <b>{text}</b>",
