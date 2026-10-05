@@ -57,6 +57,7 @@ def _items_for(cur, order_id: int) -> List[Dict[str, Any]]:
 
 
 def _order_dict(r: Any, *, items: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    pickup_at = r.get("pickup_at")
     return {
         "id": int(r["id"]),
         "orderUUID": r.get("order_uuid"),
@@ -75,6 +76,9 @@ def _order_dict(r: Any, *, items: Optional[List[Dict[str, Any]]] = None) -> Dict
         "adminRestaurant": r.get("admin_restaurant") or "",
         "adminHeureMax": r.get("admin_heure_max") or "",
         "adminLienPreuve": r.get("admin_lien_preuve") or "",
+        "pickupNom": r.get("pickup_nom") or "",
+        "pickupPrenom": r.get("pickup_prenom") or "",
+        "pickupAt": pickup_at.isoformat() if pickup_at is not None else None,
         "userId": int(r["user_id"]) if r.get("user_id") is not None else None,
         "submittedAt": r["submitted_at"].isoformat() if r.get("submitted_at") else None,
         "checkedInAt": r["checked_in_at"].isoformat() if r.get("checked_in_at") else None,
@@ -89,6 +93,7 @@ _ORDER_COLS = """
     total_points, total_eur, account_id, user_id,
     terminer, annulee, annulation_explication,
     admin_prenom, admin_restaurant, admin_heure_max, admin_lien_preuve,
+    pickup_nom, pickup_prenom, pickup_at,
     submitted_at, checked_in_at, terminee_at
 """
 
@@ -168,32 +173,6 @@ def create_order(
         return order_id
 
 
-def update_status(order_uuid: str, status: str) -> int:
-    if not order_uuid or not status:
-        return 0
-    status = status.upper().strip()
-    with get_cursor() as cur:
-        if status == "CHECKED_IN":
-            cur.execute(
-                """
-                UPDATE orders
-                SET status = %s, checked_in_at = NOW()
-                WHERE order_uuid = %s
-                """,
-                (status, str(order_uuid)),
-            )
-        else:
-            cur.execute(
-                """
-                UPDATE orders
-                SET status = %s
-                WHERE order_uuid = %s
-                """,
-                (status, str(order_uuid)),
-            )
-        return cur.rowcount or 0
-
-
 def list_queued_for_admin(limit: int = 100) -> List[Dict[str, Any]]:
     """File admin : commandes en cours (terminer=false)."""
     limit = max(1, min(int(limit or 100), 200))
@@ -205,6 +184,9 @@ def list_queued_for_admin(limit: int = 100) -> List[Dict[str, Any]]:
                 o.order_number,
                 o.order_uuid,
                 o.submitted_at,
+                o.pickup_nom,
+                o.pickup_prenom,
+                o.pickup_at,
                 u.first_name,
                 u.last_name,
                 u.username,
@@ -219,14 +201,26 @@ def list_queued_for_admin(limit: int = 100) -> List[Dict[str, Any]]:
         )
         out = []
         for r in cur.fetchall() or []:
-            name = _client_name(r)
+            pickup_name = " ".join(
+                p
+                for p in [
+                    (r.get("pickup_prenom") or "").strip(),
+                    (r.get("pickup_nom") or "").strip(),
+                ]
+                if p
+            )
+            name = pickup_name or _client_name(r)
             order_id = r.get("order_number") or str(r.get("id") or "")
+            pickup_at = r.get("pickup_at")
             out.append(
                 {
                     "id": int(r["id"]),
                     "orderNumber": r.get("order_number"),
                     "orderUUID": r.get("order_uuid"),
                     "clientName": name,
+                    "pickupNom": r.get("pickup_nom") or "",
+                    "pickupPrenom": r.get("pickup_prenom") or "",
+                    "pickupAt": pickup_at.isoformat() if pickup_at is not None else None,
                     "label": f"{name} - {order_id}",
                     "submittedAt": r["submitted_at"].isoformat()
                     if r.get("submitted_at")
@@ -245,24 +239,6 @@ def get_order_by_id(order_id: int) -> Optional[Dict[str, Any]]:
             WHERE id = %s
             """,
             (int(order_id),),
-        )
-        r = cur.fetchone()
-        if not r:
-            return None
-        return _order_dict(r, items=_items_for(cur, int(r["id"])))
-
-
-def get_order(order_uuid: str) -> Optional[Dict[str, Any]]:
-    if not order_uuid:
-        return None
-    with get_cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT {_ORDER_COLS}
-            FROM orders
-            WHERE order_uuid = %s
-            """,
-            (str(order_uuid),),
         )
         r = cur.fetchone()
         if not r:

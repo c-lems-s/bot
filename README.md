@@ -1,10 +1,12 @@
 # KFCPerso — démarrage from scratch
 
-Mini-app Telegram + CLI pour commander chez KFC France en points fidélité.
+Mini-app Telegram pour commander chez KFC France (catalogue local + solde EUR).
 
-- **1 compte KFC** partagé (table Postgres `config`) pour tous les users
 - **Accès web** via Telegram WebApp (auth `initData`)
-- **PostgreSQL** : config, users, sessions, articles, blacklist, historique
+- **Bot** : `/start` (bienvenue + bouton « Accéder à la boutique »), `/actif` (admin)  
+  Menu commandes Telegram : users voient seulement `/start` ; `/actif` est limité au chat admin
+- **PostgreSQL** : config shop, users, sessions, articles, blacklist, commandes, paiements
+- **Checkout local** : débit solde → commande `QUEUED` (traitement admin)
 
 ---
 
@@ -14,10 +16,9 @@ Mini-app Telegram + CLI pour commander chez KFC France en points fidélité.
 |-------|--------------------|------|
 | Python | 3.10+ | Runtime |
 | PostgreSQL | 14+ | Base de données |
-| Compte KFC FR | session web valide | `account_id`, Bearer, cookies |
 | Bot Telegram | token BotFather | Auth WebApp (prod) |
 
-Optionnel en local : navigateur seul avec `ALLOW_DEV_AUTH=1` (sans Telegram).
+Auth : uniquement Telegram WebApp (`initData` signé). Pas de mode DEV.
 
 ---
 
@@ -58,25 +59,28 @@ DB_NAME=kfc_perso
 DB_USER=postgres
 DB_PASSWORD=ton_mot_de_passe
 
-# Prod Telegram
 TELEGRAM_BOT_TOKEN=123456:ABC...
-ALLOW_DEV_AUTH=0
+TELEGRAM_AUTH_MAX_AGE_SECONDS=3600
+```
 
-# Dev local hors Telegram
-# ALLOW_DEV_AUTH=1
+Si webhook Telegram (au lieu du poll) :
+
+```env
+TELEGRAM_WEBHOOK=1
+TELEGRAM_WEBHOOK_SECRET=une-chaine-longue-aleatoire
 ```
 
 PostgreSQL doit tourner et l’utilisateur doit pouvoir créer une base.
 
-### 3. Compte KFC (table `config`)
+### 3. Config shop (table `config`)
 
-Les secrets KFC vivent dans Postgres (`config`, ligne `id=1`), **pas** dans un fichier au runtime.
+Paramètres shop (réduction, admin Telegram, actif, etc.) dans Postgres (`config`, ligne `id=1`).
 
 Import one-shot depuis un ancien `config.json` (optionnel) :
 
 ```bash
 copy config.example.json config.json
-# renseigner account_id / authorization / cookies
+# renseigner reduction / admin / balance / currency
 python -m db.ensure_db
 python -m db.seed_config --force
 ```
@@ -85,11 +89,11 @@ Ou en SQL direct :
 
 ```sql
 UPDATE config SET
-  account_id = 'UUID…',
-  auth_token = 'Bearer …',
-  cookies = '{"XSRF-TOKEN":"…","refreshToken":"…"}'::jsonb,
-  balance = 100.98,
-  currency = 'EUR'
+  reduction = 100,
+  admin = 123456789,
+  balance = 0,
+  currency = 'EUR',
+  actif = true
 WHERE id = 1;
 ```
 
@@ -114,7 +118,22 @@ python -m db.migrate
 
 ---
 
-## Lancer la webapp
+## Deux modes : local + Cloudflare / cloud (Railway)
+
+| | **Local** (`APP_ENV=local`) | **Cloud** (`APP_ENV=cloud` ou Railway) |
+|--|--|--|
+| Lancement | `python -m webapp.server` | `python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app` |
+| Écoute | `127.0.0.1` | `0.0.0.0` |
+| HTTPS | Tunnel Cloudflare | URL fournie par l’hébergeur |
+| Postgres | `DB_*` (+ création auto de la base) | `DATABASE_URL` (migrate seulement) |
+| Telegram | Poll (défaut) | Webhook (`TELEGRAM_WEBHOOK=1`) |
+| Healthcheck | `GET /health` | `GET /health` |
+
+`APP_ENV` est auto-détecté si des variables `RAILWAY_*` sont présentes.
+
+---
+
+## Lancer la webapp (local)
 
 ```bash
 python -m webapp.server
@@ -132,23 +151,15 @@ $env:PORT="9000"; python -m webapp.server
 PORT=9000 python -m webapp.server
 ```
 
-### Mode développement (sans Telegram)
-
-Dans `.env` :
-
-```env
-ALLOW_DEV_AUTH=1
-```
-
-Les appels API acceptent alors un user fictif (header optionnel `X-Dev-Telegram-Id`).
-
-### Mode production (Telegram)
+### Telegram via Cloudflare (local)
 
 1. `TELEGRAM_BOT_TOKEN` renseigné  
-2. `ALLOW_DEV_AUTH=0`  
-3. Exposer la webapp en HTTPS (voir dossier [`cloudflare/`](cloudflare/README.md))  
-4. Coller l’URL HTTPS dans BotFather (Menu Button / Mini App)  
-5. Ouvrir la Mini App **depuis Telegram** (le front envoie `X-Telegram-Init-Data`)
+2. Exposer la webapp en HTTPS (voir dossier [`cloudflare/`](cloudflare/README.md))  
+3. Coller l’URL HTTPS dans BotFather (Menu Button / Mini App)  
+4. Ouvrir la Mini App **depuis Telegram** (le front envoie `X-Telegram-Init-Data`)
+
+Sans `initData` valide → les routes `/api/*` répondent **401**.  
+La config shop (`reduction`, `admin`, …) n’est **jamais** exposée au client ; bootstrap via `GET /api/me`.
 
 Quick tunnel (test) :
 
@@ -160,19 +171,92 @@ REM Terminal 2 — double-clic ou :
 cloudflare\start-quick.bat
 ```
 
-Sans `initData` valide → les routes `/api/*` répondent **401**.
+### Cloud / Railway — démarche
 
----
+Le repo est prêt (`Procfile`, `railway.toml`, gunicorn, `/health`).  
+À faire une fois dans le dashboard Railway :
 
-## Lancer le CLI (admin / test mono-user)
+1. **New Project** → Deploy from GitHub (ce repo).  
+   Déployez la branche qui contient le boot cloud (ex. PR `cursor/webapp-only-…`), pas un `main` sans `DATABASE_URL`.  
+2. **Add Database** → **PostgreSQL** dans le **même projet** que le service web.  
+3. **Variables** du service web :
 
-Le CLI utilise la table `config` et Postgres (blacklist, historique).
+| Variable | Valeur |
+|----------|--------|
+| `APP_ENV` | `cloud` (optionnel si `RAILWAY_*` détecté) |
+| `TELEGRAM_BOT_TOKEN` | token BotFather |
+| `TELEGRAM_WEBHOOK` | `1` (enregistre le webhook au boot si URL + secret OK) |
+| `TELEGRAM_WEBHOOK_SECRET` | longue chaîne aléatoire (**obligatoire** avec le webhook) |
+| `PUBLIC_BASE_URL` | `https://${{RAILWAY_PUBLIC_DOMAIN}}` (après Generate Domain) |
+| `SET_WEBHOOK_ON_BOOT` | `1` (enregistre le webhook au démarrage) |
+| `ADMIN_TELEGRAM_ID` | ton id Telegram numérique (seed `config.admin`) |
+| `UPLOADS_ROOT` | `/data/uploads` (si volume monté, voir ci-dessous) |
 
-```bash
-python main.py
+#### Où est `DATABASE_URL` ?
+
+Elle n’apparaît **pas** toute seule sur le service web. Elle est créée sur le service **Postgres**.
+
+**A. Créer Postgres (si absent du canvas)**  
+Canvas du projet → **+ Create** → **Database** → **Add PostgreSQL**.  
+Tu dois voir **deux** boîtes : ton app **et** Postgres.
+
+**B. Voir la valeur (sur Postgres)**  
+Clique la boîte **Postgres** → onglet **Variables** → tu y vois `DATABASE_URL` (et souvent `DATABASE_PUBLIC_URL`, `PGHOST`, …).  
+Ne copie pas forcément la valeur secrète dans le web — préfère une **référence**.
+
+**C. L’injecter dans le service web (obligatoire)**  
+1. Clique la boîte de **ton app** (pas Postgres) → **Variables**  
+2. **New Variable** / **Raw Editor** et ajoute exactement :
+
+```text
+DATABASE_URL=${{Postgres.DATABASE_URL}}
 ```
 
-Parcours : recherche resto → articles fidélité → checkout → submit (reCAPTCHA bypass) → check-in.
+Si ton service s’appelle autrement (ex. `PostgreSQL` ou `Postgres-abc`), adapte le nom :
+
+```text
+DATABASE_URL=${{PostgreSQL.DATABASE_URL}}
+```
+
+Le nom entre `${{…}}` = nom exact de la boîte Postgres sur le canvas (sensible à la casse).
+
+Alternative UI : **Variables** → **Add Variable** → onglet / option **Add Reference** → choisir Postgres → `DATABASE_URL`.
+
+3. **Deploy** / **Redeploy** le service web.
+
+Sans ça, les logs montrent :
+
+```text
+[boot] APP_ENV=cloud
+[-] Boot DB impossible : … localhost … port 5432 … Connection refused
+```
+
+Boot OK : `DATABASE_URL present (host=….railway.internal)` puis gunicorn.
+
+4. **Domaine public + webhook Telegram** (sinon `URL manquante` au boot) :  
+   - Service web → **Settings** → **Networking** → **Generate Domain**  
+   - **Variables** → ajouter :
+     ```text
+     PUBLIC_BASE_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}
+     SET_WEBHOOK_ON_BOOT=1
+     TELEGRAM_WEBHOOK=1
+     TELEGRAM_WEBHOOK_SECRET=<longue-chaine-aleatoire>
+     ```
+   - Redeploy → boot doit afficher `[+] Webhook OK`
+5. **Volume uploads** (preuves paiement + photos notif) — sinon les fichiers disparaissent à chaque redeploy :  
+   - Service web → **Volumes** → Add volume  
+   - Mount path : `/data/uploads`  
+   - Variable : `UPLOADS_ROOT=/data/uploads`  
+6. Vérifier santé :  
+   - `https://<domaine>/health` → `{"ok": true, "env": "cloud"}`  
+   - `https://<domaine>/health?deep=1` → DB + uploads `writable`  
+7. **BotFather** → Menu Button / Mini App → URL = le domaine généré (`https://….up.railway.app`).
+
+Start manuel équivalent :
+
+```bash
+python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app
+```
 
 ---
 
@@ -181,11 +265,16 @@ Parcours : recherche resto → articles fidélité → checkout → submit (reCA
 | Commande | Description |
 |----------|-------------|
 | `pip install -r requirements.txt` | Dépendances |
-| `python -m db.ensure_db` | Crée DB + migrations + seed config |
+| `python -m db.ensure_db` | Crée DB (local) + migrations + seed config |
 | `python -m db.migrate` | Migrations uniquement |
+| `python -m webapp.boot` | Prep DB selon `APP_ENV` (create local / migrate cloud) |
 | `python -m db.seed_config [--force]` | Import `config.json` → table `config` |
-| `python -m webapp.server` | Mini-app web |
-| `python main.py` | CLI commande |
+| `python -m webapp.seed_admin_env` | Pose `config.admin` depuis `ADMIN_TELEGRAM_ID` |
+| `python -m webapp.set_webhook` | Enregistre le webhook Telegram (`PUBLIC_BASE_URL`) |
+| `python -m webapp.bot_commands` | Menu commandes (`/start` public, `/actif` admin) |
+| `python -m webapp.smoke_deploy [--deep]` | Smoke test post-deploy (`/health`, `/`, webhook) |
+| `python -m webapp.server` | Mini-app web (Flask, local) |
+| `gunicorn -c gunicorn.conf.py webapp.wsgi:app` | Mini-app cloud |
 
 ---
 
@@ -196,9 +285,12 @@ KFCPerso/
 ├── config.example.json  # modele (optionnel pour seed)
 ├── config.json          # legacy local, import one-shot seulement
 ├── .env                 # Postgres + Telegram (local)
-├── main.py              # CLI
+├── Procfile             # start cloud (Railway)
+├── railway.toml         # build / healthcheck / start
+├── gunicorn.conf.py     # workers / bind cloud
 ├── webapp/              # Flask + auth Telegram + UI
-├── kfc/                 # métier + API KFC
+├── cloudflare/          # tunnel HTTPS local
+├── kfc/                 # catalogue public (restos + menu)
 ├── db/                  # Postgres (connection, repos, migrate)
 └── migrations/          # SQL versionné
 ```
@@ -210,10 +302,15 @@ KFCPerso/
 | Symptôme | Piste |
 |----------|--------|
 | `Connexion PostgreSQL impossible` | Postgres démarré ? Mot de passe `.env` ? `python -m db.ensure_db` |
-| `401 Authentification Telegram requise` | Ouvrir via Telegram, ou `ALLOW_DEV_AUTH=1` en local |
-| `account_id non renseigne` | Remplir table `config` ou `python -m db.seed_config --force` |
-| `KFC indisponible` | Resto blacklisté (éligibilité fidélité &lt; 31 items) |
-| Échec soumission / reCAPTCHA | Bypass auto + éventuel `recaptcha_token` dans table `config` |
+| Railway : SSL / connection refused | `DATABASE_URL` lié ? `sslmode=require` ajouté auto en cloud |
+| Railway : `localhost:5432 Connection refused` | Postgres non lié : Variables → Add Reference → `Postgres.DATABASE_URL` |
+| Railway : healthcheck fail | `GET /health` doit répondre 200 |
+| Preuves / photos perdues après deploy | Volume `/data/uploads` + `UPLOADS_ROOT=/data/uploads` |
+| `/health?deep=1` uploads KO | Droits d’écriture sur le volume ; chemin `UPLOADS_ROOT` |
+| Webhook Telegram KO | `PUBLIC_BASE_URL` https + `TELEGRAM_WEBHOOK_SECRET` ; `python -m webapp.set_webhook --info` |
+| Bot `/start` muet | Webhook non enregistre alors que `TELEGRAM_WEBHOOK=1` coupe le poll — redeploy avec URL+secret ; logs boot `Telegram ingress` |
+| `401 Authentification Telegram requise` | Ouvrir la Mini App depuis Telegram (initData) |
+| `KFC indisponible` | Resto blacklisté |
 | `Module KFC` / imports | Lancer les commandes **depuis** le dossier `KFCPerso` avec le venv activé |
 
 ---
@@ -221,5 +318,4 @@ KFCPerso/
 ## Rappel sécurité
 
 - Ne commit **jamais** `.env` ni un `config.json` rempli
-- En prod : `ALLOW_DEV_AUTH=0` et HTTPS pour la Mini App
-- Un seul compte KFC sert tous les users (points / session partagés côté KFC)
+- En prod : HTTPS pour la Mini App ; ne jamais exposer la table `config` au client

@@ -2,7 +2,6 @@
 Acces session courante + cache menuItems en memoire process.
 
 Remplace le STATE global mono-user.
-Compte KFC unique (table config) — pas de lock concurrence en V1.
 """
 
 from __future__ import annotations

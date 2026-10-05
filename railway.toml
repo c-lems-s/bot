@@ -1,0 +1,19 @@
+# Railway — https://docs.railway.app/reference/config-as-code
+# Le service Postgres doit etre lie (injecte DATABASE_URL).
+#
+# Volume uploads (preuves / photos notif) :
+#   1. Service web → Settings → Volumes → Add volume
+#   2. Mount path : /data/uploads
+#   3. Variable   : UPLOADS_ROOT=/data/uploads
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+# TELEGRAM_WEBHOOK=1 + PUBLIC_BASE_URL + TELEGRAM_WEBHOOK_SECRET
+# → le boot enregistre le webhook (sinon /start reste muet).

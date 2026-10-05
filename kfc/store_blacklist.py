@@ -1,7 +1,8 @@
-"""Blacklist persistante des restaurants non éligibles (fidélité).
+"""Blacklist persistante des restaurants.
 
-API publique stable : is_blacklisted, add_store, …
-Implémentation : PostgreSQL via db.repositories.blacklist.
+API publique stable : is_blacklisted, get_blacklisted_ids, add_store, …
+La verification a lieu a la recherche et a la selection de resto.
+Les regles d'ajout automatique seront branchees plus tard.
 """
 
 from __future__ import annotations
@@ -29,9 +30,9 @@ def add_store(
     name: str = "",
     city: str = "",
     matched_items: Optional[int] = None,
-    reason: str = "loyalty_match",
+    reason: str = "manual",
 ) -> None:
-    """Ajoute un restaurant à la blacklist (idempotent)."""
+    """Ajoute un restaurant a la blacklist (idempotent)."""
     repo.add_store(
         store_id,
         name=name,
@@ -42,5 +43,5 @@ def add_store(
 
 
 def remove_store(store_id: str) -> bool:
-    """Retire un restaurant de la blacklist. Retourne True si présent."""
+    """Retire un restaurant de la blacklist. Retourne True si present."""
     return repo.remove_store(store_id)

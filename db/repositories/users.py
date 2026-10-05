@@ -111,22 +111,6 @@ def get_balance(user_id: int) -> float:
         return float(bal) if bal is not None else 0.0
 
 
-def set_balance(user_id: int, balance: float) -> float:
-    with get_cursor() as cur:
-        cur.execute(
-            """
-            UPDATE users SET balance = %s
-            WHERE id = %s
-            RETURNING balance
-            """,
-            (float(balance), int(user_id)),
-        )
-        row = cur.fetchone()
-        if not row:
-            raise ValueError(f"user {user_id} introuvable")
-        return float(row["balance"])
-
-
 def credit(user_id: int, amount: float) -> float:
     """Credite le solde (remboursement / correction). Retourne le solde apres."""
     amount = float(amount)

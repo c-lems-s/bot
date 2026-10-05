@@ -1,4 +1,4 @@
-"""Polling Telegram (callbacks Accepter/Refuser paiement).
+"""Polling Telegram (commandes bot /start, /actif).
 
 Lance en thread daemon depuis webapp.server, ou :
     python -m webapp.bot_poll
@@ -7,13 +7,12 @@ Lance en thread daemon depuis webapp.server, ou :
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 
-from webapp import telegram as tg
 from webapp import bot_actif
-from webapp.paiement_review import process_update as process_paiement_update
+from webapp import bot_start
+from webapp import telegram as tg
 
 log = logging.getLogger(__name__)
 
@@ -22,14 +21,25 @@ _offset: int | None = None
 
 
 def process_update(update: dict) -> None:
-    if bot_actif.process_update(update):
-        return
-    process_paiement_update(update)
+    try:
+        if bot_start.process_update(update):
+            log.info("Update consomme par /start")
+            return
+        if bot_actif.process_update(update):
+            log.info("Update consomme par /actif")
+            return
+        msg = update.get("message") or update.get("edited_message") or {}
+        text = (msg.get("text") or "").strip()
+        if text.startswith("/"):
+            log.info("Commande ignoree (non geree) : %r", text[:80])
+    except Exception:
+        log.exception("Erreur process_update")
+        raise
 
 
 def _poll_loop() -> None:
     global _offset
-    log.info("Telegram bot poll demarre (/actif + paiements)")
+    log.info("Telegram bot poll demarre (/start, /actif)")
     while True:
         try:
             updates = tg.get_updates(offset=_offset, timeout=25)
@@ -43,16 +53,21 @@ def _poll_loop() -> None:
             time.sleep(3)
 
 
-def start_polling_thread() -> bool:
-    """Demarre le poll si TELEGRAM_BOT_TOKEN present. Idempotent."""
+def start_polling_thread(*, force: bool = False) -> bool:
+    """Demarre le poll si TELEGRAM_BOT_TOKEN present. Idempotent.
+
+    ``force=True`` : demarre meme si TELEGRAM_WEBHOOK=1 (fallback si webhook vide).
+    """
     global _started
     if _started:
         return True
     if not tg.bot_token():
         log.warning("TELEGRAM_BOT_TOKEN absent — poll bot desactive")
         return False
-    # Desactive si webhook explicite
-    if (os.getenv("TELEGRAM_WEBHOOK") or "").strip() in ("1", "true", "True"):
+    from webapp.env import telegram_webhook_enabled
+
+    # Desactive si webhook explicite (sauf fallback force)
+    if telegram_webhook_enabled() and not force:
         log.info("TELEGRAM_WEBHOOK=1 — poll desactive (utilisez /telegram/webhook)")
         return False
     _started = True

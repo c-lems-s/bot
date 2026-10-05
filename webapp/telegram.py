@@ -1,4 +1,4 @@
-"""Telegram Bot API — envoi messages / photos / callbacks paiement."""
+"""Telegram Bot API — envoi messages / photos (bot /actif, notifs user)."""
 
 from __future__ import annotations
 
@@ -142,20 +142,25 @@ def edit_message_text(
         payload["parse_mode"] = parse_mode
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
-    return api_call("editMessageText", **payload)
 
-
-def edit_message_reply_markup(
-    chat_id: int,
-    message_id: int,
-    reply_markup: Optional[Dict[str, Any]] = None,
-) -> Optional[Dict[str, Any]]:
-    return api_call(
-        "editMessageReplyMarkup",
-        chat_id=int(chat_id),
-        message_id=int(message_id),
-        reply_markup=reply_markup or {"inline_keyboard": []},
-    )
+    token = bot_token()
+    if not token:
+        log.warning("TELEGRAM_BOT_TOKEN manquant — envoi ignore (editMessageText)")
+        return None
+    try:
+        r = requests.post(_url("editMessageText"), json=payload, timeout=30)
+        data = r.json() if r.content else {}
+        if data.get("ok"):
+            return data.get("result")
+        desc = str((data.get("description") or "")).lower()
+        # Deja a jour : considere comme succes (evite panel /actif bloque)
+        if "message is not modified" in desc:
+            return {"ok": True, "unchanged": True}
+        log.error("Telegram editMessageText failed: %s", data)
+        return None
+    except Exception as e:
+        log.exception("Telegram editMessageText error: %s", e)
+        return None
 
 
 def answer_callback_query(
@@ -178,3 +183,73 @@ def get_updates(*, offset: Optional[int] = None, timeout: int = 25) -> List[Dict
         payload["offset"] = int(offset)
     result = api_call("getUpdates", **payload)
     return result if isinstance(result, list) else []
+
+
+def set_webhook(
+    url: str,
+    *,
+    secret_token: Optional[str] = None,
+    drop_pending_updates: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Enregistre l'URL webhook Bot API."""
+    payload: Dict[str, Any] = {
+        "url": str(url).strip(),
+        "drop_pending_updates": bool(drop_pending_updates),
+        "allowed_updates": ["message", "callback_query"],
+    }
+    secret = (secret_token or "").strip()
+    if secret:
+        payload["secret_token"] = secret
+    return api_call("setWebhook", **payload)
+
+
+def delete_webhook(*, drop_pending_updates: bool = False) -> Optional[Dict[str, Any]]:
+    return api_call(
+        "deleteWebhook",
+        drop_pending_updates=bool(drop_pending_updates),
+    )
+
+
+def get_webhook_info() -> Optional[Dict[str, Any]]:
+    return api_call("getWebhookInfo")
+
+
+def set_my_commands(
+    commands: List[Dict[str, str]],
+    *,
+    scope: Optional[Dict[str, Any]] = None,
+    language_code: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Enregistre le menu de commandes BotFather (scopes Telegram)."""
+    payload: Dict[str, Any] = {"commands": commands}
+    if scope is not None:
+        payload["scope"] = scope
+    if language_code:
+        payload["language_code"] = language_code
+    return api_call("setMyCommands", **payload)
+
+
+def delete_my_commands(
+    *,
+    scope: Optional[Dict[str, Any]] = None,
+    language_code: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    payload: Dict[str, Any] = {}
+    if scope is not None:
+        payload["scope"] = scope
+    if language_code:
+        payload["language_code"] = language_code
+    return api_call("deleteMyCommands", **payload)
+
+
+def get_my_commands(
+    *,
+    scope: Optional[Dict[str, Any]] = None,
+    language_code: Optional[str] = None,
+) -> Optional[Any]:
+    payload: Dict[str, Any] = {}
+    if scope is not None:
+        payload["scope"] = scope
+    if language_code:
+        payload["language_code"] = language_code
+    return api_call("getMyCommands", **payload)

@@ -1,9 +1,9 @@
 """
-Backend mini-app Telegram — multi-user, un seul compte KFC (table config).
+Backend mini-app Telegram — multi-user (panier local + solde EUR).
 
 - Auth : Telegram WebApp initData (webapp/auth.py)
-- Isolation app : sessions Postgres par user (plus de STATE global)
-- Compte KFC : partage volontaire, pas de lock concurrence en V1
+- Isolation app : sessions Postgres par user
+- Catalogue : API publique KFC (restos + menu fidélité), checkout local (QUEUED)
 
 Lancement :
     python -m webapp.server
@@ -14,7 +14,7 @@ import sys
 import threading
 import uuid
 
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_file, send_from_directory
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -29,41 +29,68 @@ from kfc.config import (  # noqa: E402
     get_currency,
     get_prochaine_heure,
     get_reduction,
-    get_version,
-    is_admin,
     is_shop_actif,
     shop_inactive_message,
 )
+from webapp.access import (  # noqa: E402
+    current_access,
+    get_access,
+    log_staff_action,
+    require_full_admin,
+    require_perm,
+)
 from kfc import store_blacklist  # noqa: E402
 from db import history as order_history  # noqa: E402
-from db.ensure_db import ensure_database  # noqa: E402
 from db.repositories import articles as articles_repo  # noqa: E402
 from db.repositories import paiements as paiements_repo  # noqa: E402
 from db.repositories import sessions as sessions_repo  # noqa: E402
 from db.repositories import users as users_repo  # noqa: E402
 from webapp.auth import require_telegram_user  # noqa: E402
+from webapp.boot import prepare_runtime  # noqa: E402
+from webapp.env import app_env, bind_host, is_cloud, telegram_webhook_enabled  # noqa: E402
+from webapp.kfc_images import register_kfc_image_routes  # noqa: E402
+from webapp.paths import ensure_uploads_dirs, paiements_uploads_dir  # noqa: E402
 from webapp import session_store  # noqa: E402
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "paiements")
-ALLOWED_PREUVE_MIME = {
-    "image/jpeg",
-    "image/jpg",
-    "image/png",
-    "image/webp",
-    "image/heic",
-    "image/heif",
-    "application/pdf",
-}
 MAX_PREUVE_BYTES = 8 * 1024 * 1024
 MAX_PREUVES_PAR_DEMANDE = 10
+MAX_DRAFT_TOPUPS = 3
+
+
+def _paiements_dir() -> str:
+    return str(paiements_uploads_dir())
+
+
+def _sniff_preuve_type(raw: bytes):
+    """Detecte le type reel du fichier (magic bytes). Ignore le MIME client."""
+    if raw.startswith(b"%PDF"):
+        return ".pdf", "application/pdf"
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png", "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return ".jpg", "image/jpeg"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return ".webp", "image/webp"
+    # HEIC/HEIF (ftyp....heic/heif/mif1)
+    if len(raw) >= 12 and raw[4:8] == b"ftyp":
+        brand = raw[8:12]
+        if brand in (b"heic", b"heif", b"mif1", b"msf1"):
+            return ".heic", "image/heic"
+    return None
+
 
 app = Flask(__name__, static_folder=None)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+register_kfc_image_routes(app)
 
 
 @app.after_request
 def _no_cache(response):
+    # Images produit : garder le Cache-Control pose par la route proxy
+    path = request.path or ""
+    if path.startswith("/api/kfc-image/"):
+        return response
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     return response
@@ -71,7 +98,8 @@ def _no_cache(response):
 
 # Routes API accessibles meme si le shop est inactif
 _SHOP_OPEN_EXEMPT_PREFIXES = (
-    "/api/config",
+    "/api/me",
+    "/api/kfc-image/",
     "/telegram/",
 )
 
@@ -103,16 +131,102 @@ POINTS_LIMIT = 2500
 SOON_LABEL = "Bientôt disponible"
 
 
-def _account_configured():
-    """Legacy : plus requis pour le flux panier local."""
-    return True
+def _unit_price_from_catalog(art: dict) -> float:
+    """Prix client final (catalogue × reduction). Source de verite serveur."""
+    original = float(art["price"])
+    return apply_reduction(original, get_reduction())
 
 
-def _build_store_menu(store_menu, session_id: int):
-    """Menu resto KFC croise avec table article (prix/label/cost)."""
+def _reprice_cart(cart: list, session_id: int | None = None) -> list:
+    """Recalcule prix/points depuis le catalogue (+ menu session pour les pts)."""
+    if not cart:
+        return []
+    ids = [str(e.get("itemId") or "") for e in cart if e.get("itemId")]
+    catalog = articles_repo.get_by_kfc_ids(ids)
+    menu = session_store.get_menu_items(session_id) if session_id else {}
+    priced = []
+    for e in cart:
+        item_id = str(e.get("itemId") or "")
+        art = catalog.get(item_id)
+        if not art or art.get("price") is None or not str(art.get("label") or "").strip():
+            raise ValueError(
+                f"Article sans prix catalogue : {e.get('name') or item_id}"
+            )
+        try:
+            qty = int(e.get("quantity") or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        qty = max(1, qty)
+        cost = art.get("cost")
+        if cost is None and menu.get(item_id):
+            cost = menu[item_id].get("cost")
+        try:
+            cost = int(cost) if cost is not None else None
+        except (TypeError, ValueError):
+            cost = None
+        if cost is None:
+            raise ValueError(
+                f"Article sans points catalogue : {e.get('name') or item_id}"
+            )
+        entry = dict(e)
+        entry["itemId"] = item_id
+        entry["price"] = _unit_price_from_catalog(art)
+        entry["cost"] = cost
+        entry["quantity"] = qty
+        entry.pop("reduction", None)
+        entry.pop("originalPrice", None)
+        priced.append(entry)
+    return priced
+
+
+def _public_cart_items(cart: list) -> list:
+    """Payload panier pour le client : aucun %, aucun prix catalogue brut."""
+    return [
+        {
+            "id": e["uid"],
+            "name": e["name"],
+            "image": e.get("image", ""),
+            "options": e.get("options", []),
+            "quantity": e.get("quantity", 1),
+            "price": e.get("price"),
+        }
+        for e in cart
+    ]
+
+
+def _can_add_by_item(session_id: int, points_used: int) -> dict:
+    """Flags canAdd par itemId — calcule cote serveur uniquement."""
+    points_used = max(0, int(points_used or 0))
+    out = {}
+    for item_id, it in (session_store.get_menu_items(session_id) or {}).items():
+        cost = it.get("cost")
+        try:
+            cost_i = int(cost) if cost is not None else None
+        except (TypeError, ValueError):
+            cost_i = None
+        if cost_i is None:
+            out[str(item_id)] = True
+        else:
+            out[str(item_id)] = (points_used + cost_i) <= POINTS_LIMIT
+    return out
+
+
+def _cart_public_payload(sess, cart: list) -> dict:
+    points = session_store.cart_points(cart)
+    return {
+        "items": _public_cart_items(cart),
+        "points": points,
+        "pointsLimit": POINTS_LIMIT,
+        "total": session_store.cart_total_eur(cart),
+        "currency": get_currency(),
+        "canAddByItemId": _can_add_by_item(sess["id"], points) if sess else {},
+    }
+
+
+def _build_store_menu(store_menu, session_id: int, *, points_used: int = 0):
+    """Menu resto KFC croise avec table article (prix final uniquement)."""
     menu_items = {}
     raw_items = []
-    reduction = get_reduction()
 
     for items in store_menu.values():
         for it in items:
@@ -123,44 +237,51 @@ def _build_store_menu(store_menu, session_id: int):
     catalog = articles_repo.get_by_kfc_ids(menu_items.keys())
     grouped = {}
     label_order = []
+    points_used = max(0, int(points_used or 0))
 
     for it in raw_items:
         item_id = str(it["id"])
         art = catalog.get(item_id)
         if art and art.get("price") is not None and str(art.get("label") or "").strip():
             label = str(art["label"]).strip()
-            original_price = float(art["price"])
-            price = apply_reduction(original_price, reduction)
+            price = _unit_price_from_catalog(art)
             cost = art.get("cost")
             if cost is None:
                 cost = it.get("cost")
+            try:
+                cost_i = int(cost) if cost is not None else None
+            except (TypeError, ValueError):
+                cost_i = None
             available = True
+            can_add = cost_i is None or (points_used + cost_i) <= POINTS_LIMIT
         else:
             label = SOON_LABEL
-            original_price = None
             price = None
-            cost = it.get("cost")
+            cost_i = None
+            try:
+                cost_i = int(it.get("cost")) if it.get("cost") is not None else None
+            except (TypeError, ValueError):
+                cost_i = None
             available = False
+            can_add = False
 
         if label not in grouped:
             grouped[label] = []
             label_order.append(label)
 
-        # Enrichit le cache menu avec cost catalogue (plafond pts)
         cached = dict(it)
-        if cost is not None:
-            cached["cost"] = cost
+        if cost_i is not None:
+            cached["cost"] = cost_i
         menu_items[item_id] = cached
 
         grouped[label].append(
             {
                 "id": item_id,
                 "name": it["name"],
-                "cost": cost,
-                "originalPrice": original_price,
+                "cost": cost_i,
                 "price": price,
-                "reduction": reduction,
                 "available": available,
+                "canAdd": bool(available and can_add),
                 "image": it.get("image", ""),
                 "hasOptions": "modgrps" in it,
             }
@@ -268,7 +389,6 @@ def _order_payload(sess):
     return {
         "storeId": sess.get("store_id"),
         "storeName": sess.get("store_name"),
-        "basketId": None,
         "channel": "Web",
         "device": "Desktop",
         "disposition": "pickup",
@@ -283,47 +403,95 @@ def index():
     return send_from_directory(STATIC_DIR, "index.html")
 
 
+@app.route("/health")
+def api_health():
+    """Healthcheck infra (Railway / reverse-proxy) — pas d'auth.
+
+    ``?deep=1`` verifie aussi Postgres + ecriture uploads.
+    """
+    payload = {"ok": True, "env": app_env()}
+    deep = (request.args.get("deep") or "").strip() in ("1", "true", "yes")
+    if not deep:
+        return jsonify(payload)
+
+    # DB
+    db_ok = False
+    db_err = None
+    try:
+        from db.connection import get_cursor
+
+        with get_cursor() as cur:
+            cur.execute("SELECT 1 AS n")
+            cur.fetchone()
+        db_ok = True
+    except Exception as e:
+        db_err = str(e)
+
+    uploads = ensure_uploads_dirs()
+    payload["db"] = {"ok": db_ok, "error": db_err}
+    payload["uploads"] = uploads
+    payload["ok"] = bool(db_ok and uploads.get("writable"))
+    status = 200 if payload["ok"] else 503
+    return jsonify(payload), status
+
+
 @app.route("/static/<path:path>")
 def static_files(path):
     return send_from_directory(STATIC_DIR, path)
 
 
-@app.route("/api/config")
+@app.route("/api/me")
 @require_telegram_user
-def api_config():
+def api_me():
+    """Bootstrap session user — aucune donnee table config (reduction, admin id, …)."""
     user = g.user
-    # Solde EUR propre a l'utilisateur (DB) — pas le balance seed table config
     try:
         balance = float(user.get("balance", 0) or 0)
     except (TypeError, ValueError):
         balance = 0.0
 
-    from webapp.auth import _dev_auth_enabled
     from db.repositories import orders as orders_repo
 
     ma = orders_repo.get_ma_commande(user["id"])
+    shop_open = True
+    try:
+        shop_open = bool(is_shop_actif())
+    except Exception:
+        shop_open = True
 
-    payload = {
-        "configured": _account_configured(),
-        "balance": balance,
-        "currency": get_currency(),
-        "reduction": get_reduction(),
-        "isAdmin": is_admin(user.get("telegram_id")),
-        "hasMaCommande": ma is not None,
-        "actif": is_shop_actif(),
-        "prochaineHeure": get_prochaine_heure(),
-        "inactiveMessage": None if is_shop_actif() else shop_inactive_message(),
-        "user": {
-            "id": user["id"],
-            "telegramId": user["telegram_id"],
-            "username": user.get("username"),
-            "firstName": user.get("first_name"),
-        },
-    }
-    if _dev_auth_enabled():
-        payload["devAuth"] = True
-        payload["version"] = get_version()
-    return jsonify(payload)
+    access = get_access(user.get("telegram_id"))
+    return jsonify(
+        {
+            "balance": balance,
+            "currency": get_currency(),
+            "hasMaCommande": ma is not None,
+            # Droit UI uniquement ; chaque /api/admin/* re-verifie les perms.
+            "showAdmin": bool(access),
+            "isFullAdmin": bool(access and access.get("fullAdmin")),
+            "adminAccess": {
+                "commandes": bool(access and access.get("commandes")),
+                "paiements": bool(access and access.get("paiements")),
+                "gestion": bool(access and access.get("gestion")),
+                "notification": bool(access and access.get("notification")),
+                "staff": bool(access and access.get("staff")),
+            }
+            if access
+            else None,
+            "shopOpen": shop_open,
+            "shopMessage": None if shop_open else shop_inactive_message(),
+            "prochaineHeure": None if shop_open else get_prochaine_heure(),
+            "pointsLimit": POINTS_LIMIT,
+        }
+    )
+
+
+@app.route("/api/config")
+@require_telegram_user
+def api_config_removed():
+    """Ancien endpoint — ne plus exposer la config shop."""
+    return jsonify(
+        {"error": "Endpoint retire. Utilisez /api/me.", "code": "GONE"}
+    ), 410
 
 
 @app.route("/api/wallet")
@@ -357,6 +525,18 @@ def api_wallet_topup_start():
         moyen_id = int(moyen_id)
     except (TypeError, ValueError):
         return jsonify({"error": "moyenId invalide"}), 400
+
+    open_n = paiements_repo.count_open_demandes(user["id"])
+    if open_n >= MAX_DRAFT_TOPUPS:
+        return jsonify(
+            {
+                "error": (
+                    f"Trop de demandes en cours (max {MAX_DRAFT_TOPUPS}). "
+                    "Finalisez ou attendez le traitement admin."
+                ),
+                "code": "TOPUP_LIMIT",
+            }
+        ), 409
 
     dem = paiements_repo.create_demande(user["id"], moyen_id)
     if not dem:
@@ -400,17 +580,11 @@ def api_wallet_topup_preuve(demande_id: int):
             {"error": f"Maximum {MAX_PREUVES_PAR_DEMANDE} preuves par demande."}
         ), 409
 
-    dest_dir = os.path.join(UPLOADS_DIR, str(demande_id))
+    dest_dir = os.path.join(_paiements_dir(), str(demande_id))
     os.makedirs(dest_dir, exist_ok=True)
 
     added = []
     for f in files[:remaining]:
-        mime = (f.mimetype or "").lower().strip()
-        if mime and mime not in ALLOWED_PREUVE_MIME:
-            return jsonify(
-                {"error": f"Type de fichier non autorise : {mime or 'inconnu'}"}
-            ), 400
-
         raw = f.read(MAX_PREUVE_BYTES + 1)
         if len(raw) > MAX_PREUVE_BYTES:
             return jsonify(
@@ -419,29 +593,26 @@ def api_wallet_topup_preuve(demande_id: int):
         if not raw:
             continue
 
-        ext = os.path.splitext(f.filename or "")[1].lower()
-        if ext not in (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".pdf"):
-            if mime == "image/png":
-                ext = ".png"
-            elif mime in ("image/jpeg", "image/jpg"):
-                ext = ".jpg"
-            elif mime == "image/webp":
-                ext = ".webp"
-            elif mime == "application/pdf":
-                ext = ".pdf"
-            else:
-                ext = ".bin"
+        sniffed = _sniff_preuve_type(raw)
+        if not sniffed:
+            return jsonify(
+                {"error": "Type de fichier non autorise (contenu invalide)."}
+            ), 400
+        ext, mime = sniffed
 
         stored = f"{uuid.uuid4().hex}{ext}"
         path = os.path.join(dest_dir, stored)
         with open(path, "wb") as out:
             out.write(raw)
 
+        safe_name = os.path.basename(f.filename or stored)
+        safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._-")[:80] or stored
+
         row = paiements_repo.add_preuve(
             demande_id,
             user["id"],
-            filename=os.path.basename(f.filename or stored),
-            mime=mime or None,
+            filename=safe_name,
+            mime=mime,
             stored_name=stored,
         )
         if row:
@@ -517,31 +688,46 @@ def api_wallet_topup_finalize(demande_id: int):
         return jsonify({"error": "Finalisation impossible"}), 409
 
     try:
-        from webapp.paiement_review import notify_admin_paiement
+        from webapp.bot_notify import notify_admin_new_payment, notify_user
 
-        ok_notif = notify_admin_paiement(demande_id)
-        if not ok_notif:
-            app.logger.warning(
-                "Notif admin echouee pour demande %s (admin/token ?)", demande_id
-            )
+        notify_admin_new_payment()
+        notify_user(
+            user.get("telegram_id"),
+            "Votre demande de paiement a ete envoyee. Elle sera traitee sous peu.",
+        )
     except Exception:
-        app.logger.exception("Erreur notif admin demande %s", demande_id)
+        app.logger.exception("Notif paiement finalize %s", demande_id)
 
     return jsonify({"demande": updated})
 
 
 @app.route("/telegram/webhook", methods=["POST"])
 def telegram_webhook():
-    """Webhook Bot API (si TELEGRAM_WEBHOOK=1). Sinon utiliser le poll."""
+    """Webhook Bot API — secret obligatoire (anti-forgery bot updates)."""
     secret = (os.environ.get("TELEGRAM_WEBHOOK_SECRET") or "").strip()
-    if secret:
-        got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if got != secret:
-            return jsonify({"error": "forbidden"}), 403
+    if not secret:
+        app.logger.error(
+            "Webhook refuse : TELEGRAM_WEBHOOK_SECRET manquant "
+            "(les commandes bot ne peuvent pas repondre)"
+        )
+        return jsonify({"error": "webhook disabled (TELEGRAM_WEBHOOK_SECRET manquant)"}), 503
+    got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not got or got != secret:
+        app.logger.warning("Webhook Telegram secret invalide / absent")
+        return jsonify({"error": "forbidden"}), 403
     update = request.get_json(silent=True) or {}
     try:
         from webapp.bot_poll import process_update
 
+        msg = update.get("message") or update.get("edited_message") or {}
+        text = (msg.get("text") or "")[:80]
+        cq = update.get("callback_query") or {}
+        app.logger.info(
+            "Webhook Telegram update_id=%s text=%r callback=%r",
+            update.get("update_id"),
+            text,
+            (cq.get("data") or "")[:80],
+        )
         process_update(update)
     except Exception:
         app.logger.exception("Erreur webhook Telegram")
@@ -554,6 +740,8 @@ def api_search():
     query = (request.json or {}).get("query", "").strip()
     if not query:
         return jsonify({"stores": []})
+    if len(query) > 80:
+        return jsonify({"error": "Recherche trop longue (max 80 caracteres)."}), 400
 
     allStores = stores.GetAllStores()
     if allStores is None:
@@ -565,6 +753,7 @@ def api_search():
     if matched is None:
         return jsonify({"stores": []})
 
+    # Blacklist : badge "indisponible" a la recherche (regles d'ajout plus tard).
     blocked = store_blacklist.get_blacklisted_ids()
     result = []
     for name, city, store_id in matched:
@@ -615,21 +804,18 @@ def api_select_store():
         store_id=str(storeId),
         store_name=name,
         store_city=city,
-        basket_id=None,
     )
-    categories = _build_store_menu(store_menu, sess["id"])
+    categories = _build_store_menu(store_menu, sess["id"], points_used=0)
 
     return jsonify(
         {
             "store": {"name": name, "city": city, "id": storeId},
             "categories": categories,
-            "connected": False,
-            "liveOrdering": False,
-            "matchedItems": None,
             "available": True,
             "sessionId": sess["id"],
-            "reduction": get_reduction(),
             "currency": get_currency(),
+            "points": 0,
+            "pointsLimit": POINTS_LIMIT,
         }
     )
 
@@ -655,15 +841,11 @@ def api_item_options():
         return jsonify(
             {"error": "Article bientot disponible — non commandable."}
         ), 403
-    original = float(art["price"])
-    reduction = get_reduction()
     return jsonify(
         {
             "name": it["name"],
             "cost": it.get("cost", 0),
-            "originalPrice": original,
-            "price": apply_reduction(original, reduction),
-            "reduction": reduction,
+            "price": _unit_price_from_catalog(art),
             "modgrps": _clean_modgrps(it.get("modgrps", [])),
         }
     )
@@ -678,6 +860,7 @@ def api_add_item():
         return jsonify({"error": "Aucune session active — choisissez un restaurant."}), 400
 
     data = request.json or {}
+    # Ignorer price/cost/reduction eventuels envoyes par le client.
     itemId = data.get("itemId")
     modgrps = data.get("modgrps", [])
 
@@ -699,14 +882,10 @@ def api_add_item():
         ), 403
 
     try:
-        original_price = float(art["price"])
+        unit_price = _unit_price_from_catalog(art)
     except (TypeError, ValueError):
         return jsonify({"error": "Prix article invalide en catalogue."}), 500
 
-    reduction = get_reduction()
-    unit_price = apply_reduction(original_price, reduction)
-
-    # Points catalogue (table article), pas le compte KFC
     cost = art.get("cost")
     if cost is None:
         cost = it.get("cost")
@@ -715,16 +894,23 @@ def api_add_item():
     except (TypeError, ValueError):
         cost = None
 
+    if cost is None:
+        return jsonify({"error": "Article sans points catalogue — non commandable."}), 403
+
     cart = list(sess.get("cart") or [])
+    try:
+        cart = _reprice_cart(cart, session_id=sess["id"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
     points_now = session_store.cart_points(cart)
 
-    if cost is not None and (points_now + cost) > POINTS_LIMIT:
+    if (points_now + cost) > POINTS_LIMIT:
         return jsonify(
             {
                 "error": f"Limite de {POINTS_LIMIT} points depassee "
                 f"({points_now} + {cost}).",
                 "points": points_now,
-                "limit": POINTS_LIMIT,
+                "pointsLimit": POINTS_LIMIT,
             }
         ), 409
 
@@ -735,15 +921,12 @@ def api_add_item():
     cart.append(
         {
             "uid": uuid.uuid4().hex,
-            "kfcItemId": None,
             "itemId": str(it["id"]),
             "name": it["name"],
             "image": it.get("image", ""),
             "options": options,
             "cost": cost,
-            "originalPrice": original_price,
             "price": unit_price,
-            "reduction": reduction,
             "quantity": 1,
             "kfc": {
                 "id": it["id"],
@@ -756,16 +939,9 @@ def api_add_item():
         }
     )
     sessions_repo.save(sess["id"], user["id"], status="DRAFT", cart=cart)
-    return jsonify(
-        {
-            "ok": True,
-            "points": session_store.cart_points(cart),
-            "limit": POINTS_LIMIT,
-            "total": session_store.cart_total_eur(cart),
-            "currency": get_currency(),
-            "liveOrdering": False,
-        }
-    )
+    payload = _cart_public_payload(sess, cart)
+    payload["ok"] = True
+    return jsonify(payload)
 
 
 @app.route("/api/basket")
@@ -774,29 +950,13 @@ def api_basket():
     user = g.user
     sess = session_store.require_open_session(user["id"])
     cart = (sess or {}).get("cart") or []
-    items = [
-        {
-            "id": e["uid"],
-            "name": e["name"],
-            "image": e.get("image", ""),
-            "options": e.get("options", []),
-            "quantity": e.get("quantity", 1),
-            "originalPrice": e.get("originalPrice"),
-            "price": e.get("price"),
-            "reduction": e.get("reduction"),
-        }
-        for e in cart
-    ]
-    return jsonify(
-        {
-            "items": items,
-            "points": session_store.cart_points(cart),
-            "limit": POINTS_LIMIT,
-            "total": session_store.cart_total_eur(cart),
-            "currency": get_currency(),
-            "reduction": get_reduction(),
-        }
-    )
+    try:
+        cart = _reprice_cart(cart, session_id=sess["id"] if sess else None)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+    if sess:
+        sessions_repo.save(sess["id"], user["id"], cart=cart)
+    return jsonify(_cart_public_payload(sess, cart))
 
 
 @app.route("/api/remove-item", methods=["POST"])
@@ -820,23 +980,39 @@ def api_remove_item():
         return jsonify({"error": "Article introuvable dans le panier"}), 404
 
     cart = [e for e in cart if e.get("uid") != uid]
+    try:
+        cart = _reprice_cart(cart, session_id=sess["id"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
     sessions_repo.save(sess["id"], user["id"], cart=cart)
-    return jsonify(
-        {
-            "ok": True,
-            "points": session_store.cart_points(cart),
-            "limit": POINTS_LIMIT,
-            "total": session_store.cart_total_eur(cart),
-            "currency": get_currency(),
-        }
-    )
+    payload = _cart_public_payload(sess, cart)
+    payload["ok"] = True
+    return jsonify(payload)
+
+
+@app.route("/api/checkout/pickup-bounds")
+@require_telegram_user
+def api_checkout_pickup_bounds():
+    """Bornes heure de recuperation (Europe/Paris) pour le formulaire checkout."""
+    from webapp.pickup import pickup_bounds_for_client
+
+    return jsonify(pickup_bounds_for_client())
 
 
 @app.route("/api/checkout", methods=["POST"])
 @require_telegram_user
 def api_checkout():
-    """Valide le panier local : debit EUR + historique. Pas de commande KFC."""
+    """Valide le panier : transaction atomique (lock DRAFT + debit + order)."""
     user = g.user
+    body = request.json or {}
+
+    from webapp.pickup import validate_checkout_pickup
+
+    try:
+        pickup = validate_checkout_pickup(body)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     sess = session_store.require_draft_session(user["id"])
     if not sess:
         return jsonify({"error": "Aucune session active"}), 400
@@ -845,16 +1021,10 @@ def api_checkout():
     if not cart:
         return jsonify({"error": "Panier vide"}), 400
 
-    for e in cart:
-        if e.get("price") is None:
-            return jsonify(
-                {
-                    "error": (
-                        f"Article sans prix catalogue : "
-                        f"{e.get('name') or e.get('itemId')}"
-                    )
-                }
-            ), 409
+    try:
+        cart = _reprice_cart(cart, session_id=sess["id"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
 
     points_total = session_store.cart_points(cart)
     if points_total > POINTS_LIMIT:
@@ -863,90 +1033,97 @@ def api_checkout():
         ), 409
 
     total_eur = session_store.cart_total_eur(cart)
-    balance = users_repo.get_balance(user["id"])
-    if balance < total_eur:
-        return jsonify(
-            {
-                "error": (
-                    f"Solde insuffisant ({balance:.2f} EUR) "
-                    f"pour un panier a {total_eur:.2f} EUR."
-                ),
-                "balance": balance,
-                "total": total_eur,
-            }
-        ), 409
-
-    if sess.get("status") != "DRAFT":
-        return jsonify({"error": f"Checkout impossible (statut {sess.get('status')})."}), 409
-
-    ok_debit, new_balance = users_repo.debit_if_sufficient(user["id"], total_eur)
-    if not ok_debit:
-        return jsonify(
-            {
-                "error": (
-                    f"Debit solde impossible "
-                    f"(solde {new_balance:.2f} EUR, total {total_eur:.2f} EUR)."
-                ),
-                "balance": new_balance,
-                "total": total_eur,
-            }
-        ), 409
+    if total_eur <= 0:
+        return jsonify({"error": "Total panier invalide."}), 409
 
     order_uuid = str(uuid.uuid4())
     order_number = f"L-{order_uuid[:8].upper()}"
+    sess = {**sess, "cart": cart}
     snapshot = _order_payload(sess)
+    snapshot["pickup"] = {
+        "nom": pickup["nom"],
+        "prenom": pickup["prenom"],
+        "at": pickup["pickup_at"].isoformat(),
+    }
+    items = [
+        {
+            "loyalty_id": e.get("itemId"),
+            "name": e.get("name"),
+            "cost": e.get("cost") or 0,
+            "quantity": e.get("quantity") or 1,
+            "modgrps": (e.get("kfc") or {}).get("modgrps") or [],
+        }
+        for e in cart
+    ]
+    last_order = {
+        "number": order_number,
+        "uuid": order_uuid,
+        "points": points_total,
+        "total": total_eur,
+        "status": "QUEUED",
+        "payload": snapshot,
+        "pickup": snapshot["pickup"],
+    }
+
+    from db.repositories import checkout as checkout_repo
 
     try:
-        order_history.save_submitted_order(
+        result = checkout_repo.finalize_local_checkout(
+            session_id=sess["id"],
+            user_id=user["id"],
+            cart=cart,
             order_uuid=order_uuid,
             order_number=order_number,
-            confirmation_url="",
             store_id=sess.get("store_id"),
             store_name=sess.get("store_name"),
             store_city=sess.get("store_city"),
             total_points=points_total,
             total_eur=total_eur,
-            account_id=None,
-            user_id=user["id"],
-            session_id=sess["id"],
-            status="QUEUED",
-            items=[
-                {
-                    "loyalty_id": e.get("itemId"),
-                    "name": e.get("name"),
-                    "cost": e.get("cost") or 0,
-                    "quantity": e.get("quantity") or 1,
-                    "modgrps": (e.get("kfc") or {}).get("modgrps") or [],
-                }
-                for e in cart
-            ],
-        )
-
-        last_order = {
-            "number": order_number,
-            "uuid": order_uuid,
-            "points": points_total,
-            "total": total_eur,
-            "confirmationUrl": None,
-            "status": "QUEUED",
-            "payload": snapshot,
-        }
-        sessions_repo.save(
-            sess["id"],
-            user["id"],
-            status="CONFIRMED",
-            cart=[],
+            items=items,
             last_order=last_order,
-            clear_basket=True,
+            pickup_nom=pickup["nom"],
+            pickup_prenom=pickup["prenom"],
+            pickup_at=pickup["pickup_at"],
         )
     except Exception:
-        try:
-            new_balance = users_repo.credit(user["id"], total_eur)
-        except Exception:
-            pass
-        raise
+        app.logger.exception("Checkout atomique echoue")
+        return jsonify({"error": "Checkout impossible, reessayez."}), 500
+
+    if not result.get("ok"):
+        code = result.get("code")
+        if code == "INSUFFICIENT":
+            bal = result.get("balance")
+            return jsonify(
+                {
+                    "error": (
+                        f"Solde insuffisant ({float(bal or 0):.2f} EUR) "
+                        f"pour un panier a {total_eur:.2f} EUR."
+                    ),
+                    "balance": bal,
+                    "total": total_eur,
+                }
+            ), 409
+        if code in ("SESSION_NOT_DRAFT", "SESSION_NOT_FOUND"):
+            return jsonify({"error": "Checkout deja en cours ou session invalide."}), 409
+        return jsonify({"error": "Checkout refuse."}), 409
 
     session_store.clear_menu_cache(sess["id"])
+
+    try:
+        from webapp.bot_notify import notify_admin_new_order, notify_user
+
+        notify_admin_new_order()
+        pickup_label = pickup["pickup_at"].strftime("%H:%M")
+        notify_user(
+            user.get("telegram_id"),
+            (
+                f"Commande enregistree (n° {order_number}). "
+                f"Retrait {pickup['prenom']} {pickup['nom']} a {pickup_label}. "
+                "Elle est en cours de traitement."
+            ),
+        )
+    except Exception:
+        app.logger.exception("Notif checkout %s", order_number)
 
     return jsonify(
         {
@@ -954,38 +1131,18 @@ def api_checkout():
             "orderUUID": order_uuid,
             "points": points_total,
             "total": total_eur,
-            "balance": new_balance,
+            "balance": result.get("balance"),
             "currency": get_currency(),
-            "confirmationUrl": None,
             "status": "QUEUED",
             "order": snapshot,
+            "pickup": {
+                "nom": pickup["nom"],
+                "prenom": pickup["prenom"],
+                "at": pickup["pickup_at"].isoformat(),
+                "time": pickup["pickup_at"].strftime("%H:%M"),
+            },
         }
     )
-
-
-@app.route("/api/order-payload")
-@require_telegram_user
-def api_order_payload():
-    user = g.user
-    sess = session_store.require_open_session(user["id"])
-    if not sess:
-        return jsonify({})
-    last = sess.get("last_order")
-    payload = _order_payload(sess)
-    if last:
-        return jsonify({**payload, "lastOrder": last})
-    return jsonify(payload)
-
-
-@app.route("/api/checkin", methods=["POST"])
-@require_telegram_user
-def api_checkin():
-    return jsonify(
-        {
-            "error": "Check-in KFC desactive — les commandes sont locales uniquement.",
-            "code": "CHECKIN_DISABLED",
-        }
-    ), 410
 
 
 @app.route("/api/history")
@@ -1002,13 +1159,148 @@ def api_history():
     )
 
 
+@app.route("/api/admin/paiements")
+@require_telegram_user
+def api_admin_paiements():
+    """File d'attente recharges PENDING — admin uniquement."""
+    denied = require_perm("paiements")
+    if denied:
+        return denied
+    return jsonify({"paiements": paiements_repo.list_pending_for_admin(limit=100)})
+
+
+@app.route("/api/admin/paiements/<int:demande_id>")
+@require_telegram_user
+def api_admin_paiement_detail(demande_id: int):
+    denied = require_perm("paiements")
+    if denied:
+        return denied
+    dem = paiements_repo.get_demande_by_id(demande_id)
+    if not dem or dem.get("status") != "PENDING":
+        return jsonify({"error": "Demande introuvable"}), 404
+    preuves = paiements_repo.list_preuves(demande_id)
+    for p in preuves:
+        p["url"] = f"/api/admin/paiements/{demande_id}/preuves/{p['id']}"
+    u = users_repo.get_by_id(int(dem["userId"])) if dem.get("userId") else None
+    client_name = "Client"
+    if u:
+        parts = [
+            (u.get("first_name") or "").strip(),
+            (u.get("last_name") or "").strip(),
+        ]
+        client_name = " ".join(p for p in parts if p) or (
+            f"@{u['username']}" if u.get("username") else f"User #{u.get('id')}"
+        )
+    return jsonify(
+        {
+            "paiement": {
+                **dem,
+                "clientName": client_name,
+                "currency": get_currency(),
+                "preuves": preuves,
+            }
+        }
+    )
+
+
+@app.route("/api/admin/paiements/<int:demande_id>/user")
+@require_telegram_user
+def api_admin_paiement_user(demande_id: int):
+    denied = require_perm("paiements")
+    if denied:
+        return denied
+    dem = paiements_repo.get_demande_by_id(demande_id)
+    if not dem or not dem.get("userId"):
+        return jsonify({"error": "Demande / user introuvable"}), 404
+    u = users_repo.get_by_id(int(dem["userId"]))
+    if not u:
+        return jsonify({"error": "User introuvable"}), 404
+    stats = users_repo.get_purchase_stats(int(u["id"]))
+    return jsonify(
+        {
+            "user": {
+                "id": u.get("id"),
+                "telegramId": u.get("telegram_id"),
+                "username": u.get("username"),
+                "firstName": u.get("first_name"),
+                "lastName": u.get("last_name"),
+                "languageCode": u.get("language_code"),
+                "balance": u.get("balance"),
+                "isActive": u.get("is_active"),
+                "firstSeenAt": u["first_seen_at"].isoformat()
+                if u.get("first_seen_at") and hasattr(u.get("first_seen_at"), "isoformat")
+                else u.get("first_seen_at"),
+                "lastSeenAt": u["last_seen_at"].isoformat()
+                if u.get("last_seen_at") and hasattr(u.get("last_seen_at"), "isoformat")
+                else u.get("last_seen_at"),
+                "purchaseCount": stats.get("purchaseCount"),
+                "lastPurchaseAt": stats.get("lastPurchaseAt"),
+            }
+        }
+    )
+
+
+@app.route("/api/admin/paiements/<int:demande_id>/preuves/<int:preuve_id>")
+@require_telegram_user
+def api_admin_paiement_preuve_file(demande_id: int, preuve_id: int):
+    """Sert une preuve — admin uniquement (auth header requis)."""
+    denied = require_perm("paiements")
+    if denied:
+        return denied
+    dem = paiements_repo.get_demande_by_id(demande_id)
+    if not dem:
+        return jsonify({"error": "Demande introuvable"}), 404
+    preuves = paiements_repo.list_preuves(demande_id)
+    cible = next((p for p in preuves if int(p["id"]) == int(preuve_id)), None)
+    if not cible:
+        return jsonify({"error": "Preuve introuvable"}), 404
+    stored = cible.get("storedName") or ""
+    if not stored or "/" in stored or "\\" in stored or ".." in stored:
+        return jsonify({"error": "Fichier invalide"}), 400
+    path = os.path.join(_paiements_dir(), str(int(demande_id)), stored)
+    if not os.path.isfile(path):
+        return jsonify({"error": "Fichier introuvable"}), 404
+    mime = (cible.get("mime") or "").strip() or "application/octet-stream"
+    return send_file(path, mimetype=mime, as_attachment=False, download_name=cible.get("filename") or stored)
+
+
+@app.route("/api/admin/paiements/<int:demande_id>/accept", methods=["POST"])
+@require_telegram_user
+def api_admin_paiement_accept(demande_id: int):
+    denied = require_perm("paiements")
+    if denied:
+        return denied
+    from webapp.paiement_review import decide_paiement
+
+    payload, err, status = decide_paiement(demande_id, accept=True)
+    if err:
+        return jsonify({"error": err}), status
+    log_staff_action("payment_accept", f"demande #{demande_id}")
+    return jsonify(payload)
+
+
+@app.route("/api/admin/paiements/<int:demande_id>/reject", methods=["POST"])
+@require_telegram_user
+def api_admin_paiement_reject(demande_id: int):
+    denied = require_perm("paiements")
+    if denied:
+        return denied
+    from webapp.paiement_review import decide_paiement
+
+    payload, err, status = decide_paiement(demande_id, accept=False)
+    if err:
+        return jsonify({"error": err}), status
+    log_staff_action("payment_reject", f"demande #{demande_id}")
+    return jsonify(payload)
+
+
 @app.route("/api/admin/orders")
 @require_telegram_user
 def api_admin_orders():
     """File d'attente commandes en cours — admin uniquement."""
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("commandes")
+    if denied:
+        return denied
     from db.repositories import orders as orders_repo
 
     return jsonify({"orders": orders_repo.list_queued_for_admin(limit=100)})
@@ -1017,9 +1309,9 @@ def api_admin_orders():
 @app.route("/api/admin/orders/<int:order_id>")
 @require_telegram_user
 def api_admin_order_detail(order_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("commandes")
+    if denied:
+        return denied
     from db.repositories import orders as orders_repo
 
     order = orders_repo.get_order_by_id(order_id)
@@ -1031,9 +1323,9 @@ def api_admin_order_detail(order_id: int):
 @app.route("/api/admin/orders/<int:order_id>/user")
 @require_telegram_user
 def api_admin_order_user(order_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("commandes")
+    if denied:
+        return denied
     from db.repositories import orders as orders_repo
 
     order = orders_repo.get_order_by_id(order_id)
@@ -1067,14 +1359,30 @@ def api_admin_order_user(order_id: int):
     )
 
 
+@app.route("/api/admin/pending-count")
+@require_telegram_user
+def api_admin_pending_count():
+    """Nombre de commandes + paiements non traites (badge Admin)."""
+    denied = require_perm("panel")
+    if denied:
+        return denied
+    from webapp.bot_notify import pending_counts
+
+    access = current_access() or {}
+    data = pending_counts()
+    orders = data["orders"] if access.get("commandes") else 0
+    paiements = data["paiements"] if access.get("paiements") else 0
+    return jsonify({"orders": orders, "paiements": paiements, "count": orders + paiements})
+
+
 @app.route("/api/admin/orders/<int:order_id>/complete", methods=["POST"])
 @require_telegram_user
 def api_admin_order_complete(order_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("commandes")
+    if denied:
+        return denied
     from db.repositories import orders as orders_repo
-    from webapp import telegram as tg
+    from webapp.bot_notify import notify_user
 
     data = request.json or {}
     order = orders_repo.complete_order(
@@ -1088,28 +1396,31 @@ def api_admin_order_complete(order_id: int):
         return jsonify({"error": "Commande introuvable ou deja terminee"}), 409
 
     client = users_repo.get_by_id(int(order["userId"])) if order.get("userId") else None
-    if client and client.get("telegram_id"):
-        tg.send_message(
-            int(client["telegram_id"]),
-            "Votre commande est terminee, rendez vous dans « Ma commande » pour consulter.",
-            parse_mode=None,
+    if client:
+        notify_user(
+            client.get("telegram_id"),
+            "Votre commande a ete acceptee. Consultez « Ma commande » pour le detail.",
         )
+    log_staff_action("order_complete", f"order #{order_id}")
     return jsonify({"order": order})
 
 
 @app.route("/api/admin/orders/<int:order_id>/cancel", methods=["POST"])
 @require_telegram_user
 def api_admin_order_cancel(order_id: int):
-    user = g.user
-    if not is_admin(user.get("telegram_id")):
-        return jsonify({"error": "Acces admin requis", "code": "ADMIN_ONLY"}), 403
+    denied = require_perm("commandes")
+    if denied:
+        return denied
     from db.repositories import orders as orders_repo
-    from webapp import telegram as tg
+    from webapp.bot_notify import notify_user
 
     data = request.json or {}
     expl = str(data.get("explication") or "").strip()
+    expl = " ".join(expl.split())
     if not expl:
         return jsonify({"error": "Explication requise"}), 400
+    if len(expl) > 500:
+        return jsonify({"error": "Explication trop longue (max 500)."}), 400
 
     before = orders_repo.get_order_by_id(order_id)
     if not before or before.get("terminer"):
@@ -1125,7 +1436,7 @@ def api_admin_order_cancel(order_id: int):
         new_bal = users_repo.credit(int(order["userId"]), refund)
 
     client = users_repo.get_by_id(int(order["userId"])) if order.get("userId") else None
-    if client and client.get("telegram_id"):
+    if client:
         msg = (
             "Votre commande a ete annulee.\n"
             f"Motif : {expl}\n"
@@ -1135,8 +1446,9 @@ def api_admin_order_cancel(order_id: int):
             if new_bal is not None:
                 msg += f"\nNouveau solde : {new_bal:.2f} {get_currency()}."
         msg += "\nConsultez « Ma commande » pour le detail."
-        tg.send_message(int(client["telegram_id"]), msg, parse_mode=None)
+        notify_user(client.get("telegram_id"), msg)
 
+    log_staff_action("order_cancel", f"order #{order_id}")
     return jsonify({"order": order, "refund": refund, "balance": new_bal})
 
 
@@ -1151,6 +1463,15 @@ def api_ma_commande():
     return jsonify({"order": order, "hasMaCommande": order is not None})
 
 
+from webapp import admin_gestion as _admin_gestion  # noqa: E402
+from webapp import admin_notifications as _admin_notifications  # noqa: E402
+from webapp import admin_staff as _admin_staff  # noqa: E402
+
+_admin_gestion.register(app)
+_admin_notifications.register(app)
+_admin_staff.register(app)
+
+
 def _warm_cache():
     try:
         stores.GetAllStores()
@@ -1159,22 +1480,34 @@ def _warm_cache():
 
 
 def main():
+    """Lancement local (Flask). Cloud : preferer gunicorn via webapp.wsgi."""
     try:
-        ensure_database()
+        prepare_runtime()
     except Exception as e:
         print(f"[-] PostgreSQL / migrations impossible : {e}")
         print("    Verifiez .env puis : python -m db.ensure_db")
         raise SystemExit(1)
 
+    host = bind_host()
     port = int(os.environ.get("PORT", "8080"))
+    print(f"[server] APP_ENV={app_env()} listen http://{host}:{port}")
+    if is_cloud():
+        print(
+            "[server] Mode cloud : pour la prod, preferer "
+            "`python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app`"
+        )
+
     threading.Thread(target=_warm_cache, daemon=True).start()
     try:
         from webapp.bot_poll import start_polling_thread
 
-        start_polling_thread()
+        if telegram_webhook_enabled():
+            print("[server] TELEGRAM_WEBHOOK=1 — poll desactive")
+        else:
+            start_polling_thread()
     except Exception as e:
         print(f"[!] Poll Telegram ignore : {e}")
-    app.run(host="127.0.0.1", port=port, debug=False)
+    app.run(host=host, port=port, debug=False)
 
 
 if __name__ == "__main__":

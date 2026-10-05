@@ -1,4 +1,4 @@
-/* Mini-app KFC — Telegram WebApp multi-user (compte KFC partage cote serveur). */
+/* Mini-app KFC — Telegram WebApp multi-user. */
 
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) {
@@ -6,17 +6,17 @@ if (tg) {
   tg.expand();
 }
 
-const api = async (path, body) => {
+const api = async (path, body, method) => {
   const opt = {
     headers: {
       "Content-Type": "application/json",
       "X-Telegram-Init-Data": (tg && tg.initData) ? tg.initData : "",
     },
   };
-  if (typeof window !== "undefined" && window.KFC_DEV_TELEGRAM_ID) {
-    opt.headers["X-Dev-Telegram-Id"] = String(window.KFC_DEV_TELEGRAM_ID);
-  }
-  if (body !== undefined) {
+  if (method) {
+    opt.method = method;
+    if (body !== undefined) opt.body = JSON.stringify(body);
+  } else if (body !== undefined) {
     opt.method = "POST";
     opt.body = JSON.stringify(body);
   }
@@ -44,15 +44,27 @@ const state = {
   currentItem: null,   // { name, modgrps }
   cartCount: 0,
   points: 0,
-  limit: 2500,
+  pointsLimit: 2500,
   lastOrder: null,     // { number, uuid, state }
   walletMoyens: [],
   topupDemandeId: null,
   topupMontant: null,
   topupDemande: null,
-  isAdmin: false,
+  showAdmin: false,
+  isFullAdmin: false,
+  adminAccess: null,
+  staffEditUserId: null,
   hasMaCommande: false,
   adminOrderId: null,
+  adminPaiementId: null,
+  gestionResource: null,
+  gestionMeta: null,
+  _preuveObjectUrls: [],
+  notifCriteria: null,
+  notifCriterion: null,
+  notifParams: {},
+  notifSelectedIds: new Set(),
+  notifPhotoFiles: [],
 };
 
 const POINTS_LIMIT_MSG =
@@ -61,26 +73,14 @@ const POINTS_LIMIT_MSG =
   "Vous pouvez faire plusieurs commandes successives sans souci. " +
   "Vous pouvez également supprimer des articles de votre panier actuel.";
 
-function pointsRemaining() {
-  const limit = Number(state.limit) || 2500;
-  const used = Number(state.points) || 0;
-  return Math.max(0, limit - used);
-}
-
-function itemExceedsPointsLimit(it) {
-  if (it == null || it.cost == null) return false;
-  const cost = Number(it.cost);
-  if (!Number.isFinite(cost)) return false;
-  return cost > pointsRemaining();
-}
-
 function updatePointsLimitBanner() {
   const banner = $("points-limit-banner");
   if (!banner) return;
   const cats = state.categories || [];
+  // Affichage seul : canAdd vient du backend (select-store / recalcul serveur).
   const anyBlocked = cats.some((cat) =>
     (cat.items || []).some(
-      (it) => it.available !== false && it.price != null && itemExceedsPointsLimit(it)
+      (it) => it.available !== false && it.price != null && it.canAdd === false
     )
   );
   banner.hidden = !anyBlocked;
@@ -104,7 +104,7 @@ function refreshMenuLimits() {
     updatePointsLimitBanner();
     return;
   }
-  renderMenu(state.categories, state.connected);
+  renderMenu(state.categories);
 }
 
 /* ---------- Navigation entre écrans ---------- */
@@ -236,8 +236,9 @@ async function selectStore(s) {
     const data = await api("/api/select-store", { storeId: s.id, name: s.name, city: s.city });
     state.menuLoaded = true;
     state.categories = data.categories;
-    state.connected = data.connected;
-    renderMenu(data.categories, data.connected);
+    if (data.pointsLimit != null) state.pointsLimit = data.pointsLimit;
+    if (data.points != null) state.points = data.points;
+    renderMenu(data.categories);
     refreshCart();
   } catch (e) {
     if (isAutoshopUnavailableError(e)) {
@@ -257,7 +258,58 @@ async function selectStore(s) {
   }
 }
 
-function renderMenu(categories, connected) {
+/* Images produit : proxy same-origin (fiable dans Telegram WebView).
+   Fallback CDN direct si le proxy échoue — pas de loading=lazy (bug iOS TG). */
+const _PRODUCT_THUMB_SVG =
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h10l-1 12H8L7 8z"/><path d="M6 8h12"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>`;
+
+function kfcImageCandidates(name) {
+  const n = String(name || "").trim();
+  if (!n) return [];
+  const enc = encodeURIComponent(n);
+  const sizes = ["xs", "sm", "md", "lg"];
+  const urls = [`/api/kfc-image/${enc}`];
+  for (const s of sizes) {
+    urls.push(`https://static.kfc.fr/images/items/${s}/${enc}.jpg`);
+  }
+  return urls;
+}
+
+function productThumbHtml(imageName, alt) {
+  const urls = kfcImageCandidates(imageName);
+  if (!urls.length) {
+    return `<div class="product-thumb">${_PRODUCT_THUMB_SVG}</div>`;
+  }
+  const altEsc = escapeHtml(alt || "");
+  // data-fallbacks : JSON encode + HTML escape pour attribut
+  const fb = escapeHtml(JSON.stringify(urls.slice(1)));
+  return `<img class="product-img" src="${urls[0]}" alt="${altEsc}"
+             referrerpolicy="no-referrer" decoding="async"
+             data-fallbacks="${fb}"
+             onerror="window.__kfcImgFallback(this)" />
+           <div class="product-thumb" style="display:none">${_PRODUCT_THUMB_SVG}</div>`;
+}
+
+window.__kfcImgFallback = function (img) {
+  if (!img) return;
+  let list = [];
+  try {
+    list = JSON.parse(img.getAttribute("data-fallbacks") || "[]");
+  } catch (e) {
+    list = [];
+  }
+  if (!Array.isArray(list)) list = [];
+  if (list.length) {
+    img.src = list.shift();
+    img.setAttribute("data-fallbacks", JSON.stringify(list));
+    return;
+  }
+  img.style.display = "none";
+  const ph = img.nextElementSibling;
+  if (ph) ph.style.display = "flex";
+};
+
+function renderMenu(categories) {
   const c = $("menu-container");
   c.innerHTML = "";
   if (!categories.length) {
@@ -277,31 +329,22 @@ function renderMenu(categories, connected) {
     cat.items.forEach((it) => {
       const card = document.createElement("div");
       const inCatalog = it.available !== false && it.price != null;
-      const overLimit = inCatalog && itemExceedsPointsLimit(it);
-      const selectable = inCatalog && !overLimit;
-      card.className = selectable
+      const canAdd = inCatalog && it.canAdd !== false;
+      const overLimit = inCatalog && it.canAdd === false;
+      card.className = canAdd
         ? "product-card"
         : overLimit
           ? "product-card unavailable over-limit"
           : "product-card unavailable";
-      const imgUrl = it.image ? `https://static.kfc.fr/images/items/xs/${encodeURIComponent(it.image)}.jpg` : "";
-      const thumb = imgUrl
-        ? `<img class="product-img" src="${imgUrl}" alt="${escapeHtml(it.name)}" loading="lazy"
-             onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
-           <div class="product-thumb" style="display:none">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h10l-1 12H8L7 8z"/><path d="M6 8h12"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>
-           </div>`
-        : `<div class="product-thumb">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h10l-1 12H8L7 8z"/><path d="M6 8h12"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>
-           </div>`;
+      const thumb = productThumbHtml(it.image, it.name);
       let priceHtml;
       if (!inCatalog) {
         priceHtml = `<div class="product-price soon">Bientôt disponible</div>`;
       } else if (overLimit) {
         priceHtml = `<div class="product-price soon">Limite panier atteinte</div>`;
       } else {
+        // Prix final serveur uniquement (pas de % / prix catalogue).
         priceHtml = `<div class="product-price-row">
-             <span class="price-old">${Number(it.originalPrice != null ? it.originalPrice : it.price).toFixed(2)} €</span>
              <span class="price-new">${Number(it.price).toFixed(2)} €</span>
            </div>`;
       }
@@ -311,7 +354,7 @@ function renderMenu(categories, connected) {
           <div class="product-name">${escapeHtml(it.name)}</div>
           ${priceHtml}
         </div>`;
-      if (selectable) {
+      if (canAdd) {
         card.onclick = () => onItemClick(it);
       } else if (overLimit) {
         card.onclick = () => showPointsLimitOverlay();
@@ -328,7 +371,7 @@ async function onItemClick(it) {
     toast("Bientôt disponible");
     return;
   }
-  if (itemExceedsPointsLimit(it)) {
+  if (it.canAdd === false) {
     showPointsLimitOverlay();
     return;
   }
@@ -503,7 +546,8 @@ async function addItem(itemId, modgrps) {
     const data = await api("/api/add-item", { itemId, modgrps });
     toast("Ajouté au panier");
     if (data.points != null) state.points = data.points;
-    if (data.limit != null) state.limit = data.limit;
+    if (data.pointsLimit != null) state.pointsLimit = data.pointsLimit;
+    applyCanAddFlags(data.canAddByItemId);
     await refreshCart();
   } catch (e) {
     toast(e.message);
@@ -523,7 +567,8 @@ async function refreshCart() {
       badge.hidden = true;
     }
     state.points = data.points || 0;
-    state.limit = data.limit || 2500;
+    if (data.pointsLimit != null) state.pointsLimit = data.pointsLimit;
+    applyCanAddFlags(data.canAddByItemId);
     renderCart(data);
     refreshMenuLimits();
   } catch (e) {
@@ -531,24 +576,28 @@ async function refreshCart() {
   }
 }
 
-/* Affiche le solde client dans la pastille du header. */
+/** Applique les flags canAdd fournis par le backend (aucune regle metier locale). */
+function applyCanAddFlags(canAddByItemId) {
+  if (!canAddByItemId || typeof canAddByItemId !== "object") return;
+  state.categories = (state.categories || []).map((cat) => ({
+    ...cat,
+    items: (cat.items || []).map((it) => {
+      const key = String(it.id);
+      if (!(key in canAddByItemId)) return it;
+      if (it.available === false || it.price == null) {
+        return { ...it, canAdd: false };
+      }
+      return { ...it, canAdd: !!canAddByItemId[key] };
+    }),
+  }));
+}
+
+/* Affiche le solde client (valeur serveur) — jamais utilise pour autoriser un paiement. */
 function setBalance(balance, currency) {
   state.balance = balance;
   state.currency = currency || "EUR";
   const el = $("balance-value");
   if (el) el.textContent = `${Number(balance).toFixed(2)} ${state.currency}`;
-}
-
-function setDevVersion(cfg) {
-  const el = $("app-version");
-  if (!el) return;
-  if (cfg && cfg.devAuth && cfg.version != null && String(cfg.version).trim() !== "") {
-    el.textContent = `v-${String(cfg.version).trim()}`;
-    el.hidden = false;
-  } else {
-    el.textContent = "";
-    el.hidden = true;
-  }
 }
 
 function renderCart(data) {
@@ -566,9 +615,7 @@ function renderCart(data) {
       row.className = "cart-row";
       const price =
         it.price != null
-          ? (it.originalPrice != null && Number(it.originalPrice) !== Number(it.price)
-              ? `<span class="c-price-wrap"><span class="price-old">${Number(it.originalPrice).toFixed(2)}</span><span class="price-new">${Number(it.price).toFixed(2)} ${currency}</span></span>`
-              : `<span class="c-pts">${Number(it.price).toFixed(2)} ${currency}</span>`)
+          ? `<span class="c-pts">${Number(it.price).toFixed(2)} ${currency}</span>`
           : "";
       const opts = (it.options && it.options.length)
         ? `<div class="c-opts">${escapeHtml(it.options.join(" · "))}</div>`
@@ -596,11 +643,49 @@ async function removeItem(itemUUID) {
 }
 
 /* ---------- Commande ---------- */
-async function checkout() {
+async function openCheckoutPickup() {
   $("go-checkout").disabled = true;
-  toast("Validation du panier…");
   try {
-    const data = await api("/api/checkout", {});
+    const bounds = await api("/api/checkout/pickup-bounds");
+    const timeEl = $("checkout-pickup-time");
+    const hint = $("checkout-pickup-hint");
+    if (!bounds.available) {
+      toast("Plus de créneau aujourd'hui (max 23h30).");
+      $("go-checkout").disabled = false;
+      return;
+    }
+    if (timeEl) {
+      timeEl.min = bounds.min || "00:00";
+      timeEl.max = bounds.max || "23:30";
+      // Propose l'heure min (maintenant) par defaut
+      if (!timeEl.value || timeEl.value < timeEl.min) {
+        timeEl.value = bounds.min;
+      }
+      if (timeEl.value > timeEl.max) timeEl.value = timeEl.max;
+    }
+    if (hint) {
+      hint.textContent =
+        `Créneau aujourd'hui entre ${bounds.min} et ${bounds.max} (heure de Paris).`;
+    }
+    showScreen("checkout-pickup");
+  } catch (e) {
+    toast(e.message || "Impossible de charger les créneaux");
+  } finally {
+    $("go-checkout").disabled = false;
+  }
+}
+
+async function checkout() {
+  const btn = $("checkout-pickup-submit") || $("go-checkout");
+  if (btn) btn.disabled = true;
+  toast("Validation du panier…");
+  const payload = {
+    nom: (($("checkout-nom") || {}).value || "").trim(),
+    prenom: (($("checkout-prenom") || {}).value || "").trim(),
+    pickupTime: (($("checkout-pickup-time") || {}).value || "").trim(),
+  };
+  try {
+    const data = await api("/api/checkout", payload);
     if (data.balance != null) {
       setBalance(data.balance, data.currency || state.currency || "EUR");
     }
@@ -608,7 +693,16 @@ async function checkout() {
     renderConfirm(data);
   } catch (e) {
     toast(e.message);
-    $("go-checkout").disabled = false;
+    if (btn) btn.disabled = false;
+    // Rafraichir bornes si heure refusee
+    try {
+      const bounds = await api("/api/checkout/pickup-bounds");
+      const timeEl = $("checkout-pickup-time");
+      if (timeEl && bounds.min) {
+        timeEl.min = bounds.min;
+        timeEl.max = bounds.max || "23:30";
+      }
+    } catch (err) {}
   }
 }
 
@@ -623,10 +717,15 @@ function renderConfirm(data) {
     data.total != null
       ? `<p class="info-note">Total : ${Number(data.total).toFixed(2)} ${escapeHtml(data.currency || "EUR")}</p>`
       : "";
+  const pickup = data.pickup || {};
+  const pickupHtml = (pickup.nom || pickup.prenom || pickup.time)
+    ? `<p class="info-note">Retrait : ${escapeHtml([pickup.prenom, pickup.nom].filter(Boolean).join(" "))} · ${escapeHtml(pickup.time || "")}</p>`
+    : "";
   box.innerHTML = `
     <p>Panier validé.</p>
     <div class="order-num">N° ${escapeHtml(String(data.orderNumber || "—"))}</div>
     ${total}
+    ${pickupHtml}
     <p class="info-note">Aucune commande KFC automatique — panier enregistré localement.</p>
     <button class="secondary-btn" id="back-menu">Nouvelle commande</button>`;
   $("back-menu").onclick = () => {
@@ -635,12 +734,6 @@ function renderConfirm(data) {
 }
 
 /* ---------- Utilitaires ---------- */
-function formatTotal(total) {
-  if (total == null) return "—";
-  if (typeof total === "number") return total.toFixed(2) + " €";
-  return String(total);
-}
-
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, "&amp;")
@@ -655,18 +748,37 @@ $("options-close").onclick = closeOptions;
 $("options-overlay").onclick = (e) => { if (e.target === $("options-overlay")) closeOptions(); };
 $("options-add").onclick = confirmOptions;
 $("cart-btn").onclick = () => { setNav(null); showScreen("cart"); refreshCart(); };
-$("go-checkout").onclick = checkout;
+$("go-checkout").onclick = openCheckoutPickup;
 $("back-to-search").onclick = backToSearch;
+const checkoutPickupBack = $("checkout-pickup-back");
+if (checkoutPickupBack) {
+  checkoutPickupBack.onclick = () => {
+    showScreen("cart");
+    refreshCart();
+  };
+}
+const checkoutPickupSubmit = $("checkout-pickup-submit");
+if (checkoutPickupSubmit) checkoutPickupSubmit.onclick = checkout;
 $("points-limit-close").onclick = closePointsLimitOverlay;
 $("points-limit-overlay").onclick = (e) => {
   if (e.target === $("points-limit-overlay")) closePointsLimitOverlay();
 };
+const adminMenuClose = $("admin-menu-close");
+if (adminMenuClose) adminMenuClose.onclick = () => closeAdminMenu();
+const adminMenuOverlay = $("admin-menu-overlay");
+if (adminMenuOverlay) {
+  adminMenuOverlay.onclick = (e) => {
+    if (e.target === adminMenuOverlay) closeAdminMenu();
+  };
+}
+document.querySelectorAll("[data-admin-section]").forEach((btn) => {
+  btn.onclick = () => openAdminSection(btn.getAttribute("data-admin-section"));
+});
 
 /* Retour à la recherche pour choisir un autre restaurant. */
 function backToSearch() {
   state.menuLoaded = false;
   state.categories = [];
-  state.connected = undefined;
   state.points = 0;
   const badge = $("cart-badge");
   if (badge) badge.hidden = true;
@@ -681,6 +793,12 @@ function backToSearch() {
 document.querySelectorAll(".nav-item").forEach((n) => {
   n.onclick = () => {
     const nav = n.dataset.nav;
+    if (nav === "admin") {
+      setNav("admin");
+      openAdminMenu();
+      return;
+    }
+    closeAdminMenu();
     setNav(nav);
     if (nav === "boutique") {
       showScreen(state.menuLoaded ? "menu" : "search");
@@ -695,22 +813,567 @@ document.querySelectorAll(".nav-item").forEach((n) => {
       showScreen("ma-commande");
     } else if (nav === "sav") {
       showScreen("sav");
-    } else if (nav === "commande") {
-      if (!state.isAdmin) {
-        toast("Acces admin requis");
-        return;
-      }
-      renderAdminOrders();
-      showScreen("commande");
     }
   };
 });
 
-function setAdminNav(isAdmin) {
-  state.isAdmin = !!isAdmin;
-  const btn = $("nav-commande");
-  if (btn) btn.hidden = !state.isAdmin;
-  document.body.classList.toggle("is-admin", state.isAdmin);
+function setAdminNav(showAdmin, access, isFullAdmin) {
+  state.showAdmin = !!showAdmin;
+  state.isFullAdmin = !!isFullAdmin;
+  state.adminAccess = access || null;
+  const btn = $("nav-admin");
+  if (btn) btn.hidden = !state.showAdmin;
+  document.body.classList.toggle("is-admin", state.showAdmin);
+  applyAdminMenuPermissions();
+  if (!state.showAdmin) {
+    closeAdminMenu();
+    setAdminBadge(0);
+    return;
+  }
+  refreshAdminBadge();
+}
+
+function canAdminSection(need) {
+  if (!state.showAdmin) return false;
+  if (state.isFullAdmin) return true;
+  const a = state.adminAccess || {};
+  return !!a[need];
+}
+
+function applyAdminMenuPermissions() {
+  document.querySelectorAll("[data-admin-need]").forEach((btn) => {
+    const need = btn.getAttribute("data-admin-need");
+    btn.hidden = !canAdminSection(need);
+  });
+}
+
+function setAdminBadge(count) {
+  const badge = $("nav-admin-badge");
+  if (!badge) return;
+  const n = Math.max(0, parseInt(count, 10) || 0);
+  if (n <= 0) {
+    badge.hidden = true;
+    badge.textContent = "0";
+    return;
+  }
+  badge.hidden = false;
+  badge.textContent = n > 99 ? "99+" : String(n);
+}
+
+function refreshAdminBadge() {
+  if (!state.showAdmin) {
+    setAdminBadge(0);
+    return;
+  }
+  api("/api/admin/pending-count")
+    .then((data) => setAdminBadge(data.count || 0))
+    .catch(() => {});
+}
+
+function openAdminMenu() {
+  applyAdminMenuPermissions();
+  const ov = $("admin-menu-overlay");
+  if (ov) ov.hidden = false;
+  refreshAdminBadge();
+}
+
+function closeAdminMenu() {
+  const ov = $("admin-menu-overlay");
+  if (ov) ov.hidden = true;
+}
+
+function openAdminSection(section) {
+  const needBySection = {
+    commande: "commandes",
+    paiement: "paiements",
+    gestion: "gestion",
+    notification: "notification",
+    staff: "staff",
+  };
+  const need = needBySection[section];
+  if (need && !canAdminSection(need)) {
+    toast("Permission insuffisante");
+    return;
+  }
+  closeAdminMenu();
+  setNav("admin");
+  if (section === "commande") {
+    state.adminOrderId = null;
+    renderAdminOrders();
+    showScreen("commande");
+  } else if (section === "paiement") {
+    state.adminPaiementId = null;
+    revokePreuveObjectUrls();
+    renderAdminPaiements();
+    showScreen("paiement");
+  } else if (section === "gestion") {
+    state.gestionResource = null;
+    renderGestionHub();
+    showScreen("gestion");
+  } else if (section === "notification") {
+    openNotificationScreen();
+  } else if (section === "staff") {
+    openStaffScreen();
+  }
+}
+
+function openStaffScreen() {
+  showScreen("staff");
+  state.staffEditUserId = null;
+  const box = $("staff-edit-box");
+  if (box) box.hidden = true;
+  loadStaffList();
+  loadStaffLogs();
+}
+
+function loadStaffList() {
+  const list = $("staff-list");
+  const empty = $("staff-empty");
+  if (!list || !empty) return;
+  list.innerHTML = "";
+  empty.hidden = false;
+  empty.textContent = "Chargement…";
+  api("/api/admin/staff")
+    .then((data) => {
+      const rows = data.staff || [];
+      list.innerHTML = "";
+      if (!rows.length) {
+        empty.textContent = "Aucun staff.";
+        empty.hidden = false;
+        return;
+      }
+      empty.hidden = true;
+      rows.forEach((s) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "queue-item queue-item-btn";
+        const name = s.firstName || (s.username ? "@" + s.username : String(s.telegramId));
+        const perms = [
+          s.canCommandes ? "Commande" : null,
+          s.canPaiements ? "Paiement" : null,
+        ]
+          .filter(Boolean)
+          .join(" + ");
+        btn.innerHTML = `
+          <div class="gestion-res-label">${escapeHtml(name)}</div>
+          <div class="c-opts">#${escapeHtml(String(s.userId))} · ${escapeHtml(perms || "—")}</div>`;
+        btn.onclick = () => openStaffEdit(s, { existing: true });
+        list.appendChild(btn);
+      });
+    })
+    .catch((e) => {
+      empty.textContent = e.message || "Erreur";
+      empty.hidden = false;
+    });
+}
+
+function openStaffEdit(s, { existing = false } = {}) {
+  state.staffEditUserId = s.userId || s.id;
+  const box = $("staff-edit-box");
+  const label = $("staff-edit-label");
+  const rem = $("staff-remove-btn");
+  if (box) box.hidden = false;
+  const name = s.firstName || (s.username ? "@" + s.username : String(s.telegramId || s.id));
+  if (label) label.textContent = `Staff : ${name} (#${state.staffEditUserId})`;
+  const cp = $("staff-can-paiements");
+  const cc = $("staff-can-commandes");
+  if (cp) cp.checked = !!s.canPaiements;
+  if (cc) cc.checked = !!s.canCommandes;
+  if (rem) rem.hidden = !existing;
+  loadStaffLogs();
+}
+
+function openStaffEditFromUser(u) {
+  if (u.isStaff) {
+    api("/api/admin/staff")
+      .then((data) => {
+        const found = (data.staff || []).find((s) => s.userId === u.id);
+        if (found) openStaffEdit(found, { existing: true });
+        else {
+          openStaffEdit(
+            {
+              userId: u.id,
+              telegramId: u.telegramId,
+              username: u.username,
+              firstName: u.firstName,
+              canPaiements: false,
+              canCommandes: true,
+            },
+            { existing: false }
+          );
+        }
+      })
+      .catch((e) => toast(e.message || "Erreur"));
+    return;
+  }
+  openStaffEdit(
+    {
+      userId: u.id,
+      telegramId: u.telegramId,
+      username: u.username,
+      firstName: u.firstName,
+      canPaiements: false,
+      canCommandes: true,
+    },
+    { existing: false }
+  );
+}
+
+async function searchStaffUsers() {
+  const q = (($("staff-user-q") || {}).value || "").trim();
+  const list = $("staff-user-pick");
+  if (!list) return;
+  list.innerHTML = `<p class="info-note">Chargement…</p>`;
+  try {
+    const data = await api(`/api/admin/staff/users?q=${encodeURIComponent(q)}`);
+    const users = data.users || [];
+    if (!users.length) {
+      list.innerHTML = `<p class="info-note">Aucun user.</p>`;
+      return;
+    }
+    list.innerHTML = "";
+    users.forEach((u) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "queue-item queue-item-btn";
+      const name = u.firstName || (u.username ? "@" + u.username : String(u.telegramId));
+      row.innerHTML = `
+        <div class="gestion-res-label">${escapeHtml(name)}${u.isStaff ? " · staff" : ""}</div>
+        <div class="c-opts">#${escapeHtml(String(u.id))} · ${escapeHtml(String(u.telegramId))}</div>`;
+      row.onclick = () => openStaffEditFromUser(u);
+      list.appendChild(row);
+    });
+  } catch (e) {
+    list.innerHTML = `<p class="info-note">${escapeHtml(e.message || "Erreur")}</p>`;
+  }
+}
+
+async function saveStaffMember() {
+  if (!state.staffEditUserId) {
+    toast("Choisissez un user");
+    return;
+  }
+  const canP = !!($("staff-can-paiements") || {}).checked;
+  const canC = !!($("staff-can-commandes") || {}).checked;
+  if (!canP && !canC) {
+    toast("Au moins une permission");
+    return;
+  }
+  const btn = $("staff-save-btn");
+  if (btn) btn.disabled = true;
+  try {
+    await api("/api/admin/staff", {
+      userId: state.staffEditUserId,
+      canPaiements: canP,
+      canCommandes: canC,
+    });
+    toast("Staff enregistre");
+    state.staffEditUserId = null;
+    const box = $("staff-edit-box");
+    if (box) box.hidden = true;
+    loadStaffList();
+    loadStaffLogs();
+  } catch (e) {
+    toast(e.message || "Erreur");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function removeStaffMember() {
+  if (!state.staffEditUserId) return;
+  if (!confirm("Retirer ce staff ?")) return;
+  try {
+    await api(`/api/admin/staff/${state.staffEditUserId}`, undefined, "DELETE");
+    toast("Staff retire");
+    state.staffEditUserId = null;
+    const box = $("staff-edit-box");
+    if (box) box.hidden = true;
+    loadStaffList();
+  } catch (e) {
+    toast(e.message || "Erreur");
+  }
+}
+
+function loadStaffLogs() {
+  const box = $("staff-logs");
+  if (!box) return;
+  box.innerHTML = `<p class="info-note">Chargement…</p>`;
+  const q = state.staffEditUserId ? `?userId=${state.staffEditUserId}` : "";
+  api(`/api/admin/staff/logs${q}`)
+    .then((data) => {
+      const logs = data.logs || [];
+      if (!logs.length) {
+        box.innerHTML = `<p class="info-note">Aucune action.</p>`;
+        return;
+      }
+      box.innerHTML = "";
+      logs.forEach((l) => {
+        const row = document.createElement("div");
+        row.className = "queue-item";
+        const who = l.firstName || (l.username ? "@" + l.username : String(l.telegramId || l.staffUserId));
+        row.innerHTML = `
+          <div class="gestion-res-label">${escapeHtml(l.action)} · ${escapeHtml(who)}</div>
+          <div class="c-opts">${escapeHtml(l.detail || "")} · ${escapeHtml(l.createdAt || "")}</div>`;
+        box.appendChild(row);
+      });
+    })
+    .catch((e) => {
+      box.innerHTML = `<p class="info-note">${escapeHtml(e.message || "Erreur")}</p>`;
+    });
+}
+
+function openNotificationScreen() {
+  showScreen("notification");
+  const status = $("notif-status");
+  if (status) status.hidden = true;
+  loadNotifCriteria();
+  updateNotifTargetSummary();
+  const photoInput = $("notif-photos");
+  if (photoInput && !photoInput._bound) {
+    photoInput._bound = true;
+    photoInput.onchange = () => {
+      state.notifPhotoFiles = Array.from(photoInput.files || []).slice(0, 10);
+      renderNotifPhotosPreview();
+    };
+  }
+}
+
+function loadNotifCriteria() {
+  const box = $("notif-criteria");
+  if (!box) return;
+  const paint = (criteria) => {
+    box.innerHTML = "";
+    criteria.forEach((c) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "notif-criterion-btn" + (state.notifCriterion === c.id ? " active" : "");
+      btn.textContent = c.label;
+      btn.title = c.description || "";
+      btn.onclick = () => selectNotifCriterion(c);
+      box.appendChild(btn);
+    });
+  };
+  if (state.notifCriteria && state.notifCriteria.length) {
+    paint(state.notifCriteria);
+    return;
+  }
+  box.innerHTML = `<p class="info-note">Chargement des criteres…</p>`;
+  api("/api/admin/notifications/meta")
+    .then((data) => {
+      state.notifCriteria = data.criteria || [];
+      paint(state.notifCriteria);
+    })
+    .catch((e) => {
+      box.innerHTML = `<p class="info-note">${escapeHtml(e.message || "Erreur")}</p>`;
+    });
+}
+
+function selectNotifCriterion(c) {
+  state.notifCriterion = c.id;
+  state.notifParams = {};
+  (c.params || []).forEach((p) => {
+    state.notifParams[p.key] = p.default;
+  });
+  // Selection manuelle ignoree si critere choisi (sauf ajout explicite apres)
+  loadNotifCriteria();
+  renderNotifParams(c);
+  updateNotifTargetSummary();
+}
+
+function renderNotifParams(c) {
+  const box = $("notif-params");
+  if (!box) return;
+  const params = c.params || [];
+  if (!params.length) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = params
+    .map(
+      (p) => `
+      <label class="field-label" for="notif-param-${escapeHtml(p.key)}">${escapeHtml(p.label)}</label>
+      <input class="field-input" id="notif-param-${escapeHtml(p.key)}" type="number"
+        value="${escapeHtml(String(state.notifParams[p.key] ?? p.default ?? ""))}" />`
+    )
+    .join("");
+  params.forEach((p) => {
+    const el = $(`notif-param-${p.key}`);
+    if (!el) return;
+    el.oninput = () => {
+      const v = el.value === "" ? p.default : Number(el.value);
+      state.notifParams[p.key] = Number.isFinite(v) ? v : p.default;
+      updateNotifTargetSummary();
+    };
+  });
+}
+
+function updateNotifTargetSummary() {
+  const el = $("notif-target-summary");
+  if (!el) return;
+  const manual = state.notifSelectedIds.size;
+  if (manual > 0) {
+    el.textContent = `Selection manuelle : ${manual} user(s). (Prioritaire a l'envoi)`;
+    return;
+  }
+  if (!state.notifCriterion) {
+    el.textContent = "Aucun critere selectionne.";
+    return;
+  }
+  const meta = (state.notifCriteria || []).find((c) => c.id === state.notifCriterion);
+  const label = meta ? meta.label : state.notifCriterion;
+  const paramBits = Object.keys(state.notifParams || {})
+    .map((k) => `${k}=${state.notifParams[k]}`)
+    .join(", ");
+  el.textContent = paramBits
+    ? `Critere : ${label} (${paramBits})`
+    : `Critere : ${label}`;
+}
+
+function renderNotifPhotosPreview() {
+  const box = $("notif-photos-preview");
+  if (!box) return;
+  box.innerHTML = "";
+  (state.notifPhotoFiles || []).forEach((file) => {
+    const img = document.createElement("img");
+    img.className = "notif-photo-thumb";
+    img.alt = file.name || "photo";
+    img.src = URL.createObjectURL(file);
+    box.appendChild(img);
+  });
+}
+
+async function previewNotifTargets() {
+  const btn = $("notif-preview-btn");
+  if (btn) btn.disabled = true;
+  try {
+    let body;
+    if (state.notifSelectedIds.size > 0) {
+      body = { userIds: Array.from(state.notifSelectedIds) };
+    } else if (state.notifCriterion) {
+      body = { criterion: state.notifCriterion, params: state.notifParams || {} };
+    } else {
+      toast("Choisissez un critere ou des users");
+      return;
+    }
+    const data = await api("/api/admin/notifications/preview", body);
+    toast(`${data.count || 0} destinataire(s)`);
+    const el = $("notif-target-summary");
+    if (el) {
+      el.textContent = `${data.count || 0} destinataire(s) — ${data.mode === "manual" ? "selection manuelle" : "critere"}`;
+    }
+  } catch (e) {
+    toast(e.message || "Erreur apercu");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function searchNotifUsers() {
+  const q = (($("notif-user-q") || {}).value || "").trim();
+  const list = $("notif-user-list");
+  if (!list) return;
+  list.innerHTML = `<p class="info-note">Chargement…</p>`;
+  try {
+    const data = await api(`/api/admin/notifications/users?q=${encodeURIComponent(q)}`);
+    const users = data.users || [];
+    if (!users.length) {
+      list.innerHTML = `<p class="info-note">Aucun user.</p>`;
+      return;
+    }
+    list.innerHTML = "";
+    users.forEach((u) => {
+      const row = document.createElement("label");
+      row.className = "notif-user-row";
+      const checked = state.notifSelectedIds.has(u.id) ? "checked" : "";
+      const name = u.firstName || (u.username ? "@" + u.username : String(u.telegramId));
+      row.innerHTML = `
+        <input type="checkbox" ${checked} data-uid="${u.id}" />
+        <span>
+          <strong>${escapeHtml(name)}</strong>
+          <span class="c-opts">#${escapeHtml(String(u.id))} · ${escapeHtml(String(u.telegramId))} · ${Number(u.balance || 0).toFixed(2)}</span>
+        </span>`;
+      const cb = row.querySelector("input");
+      cb.onchange = () => {
+        if (cb.checked) state.notifSelectedIds.add(u.id);
+        else state.notifSelectedIds.delete(u.id);
+        updateNotifTargetSummary();
+      };
+      list.appendChild(row);
+    });
+  } catch (e) {
+    list.innerHTML = `<p class="info-note">${escapeHtml(e.message || "Erreur")}</p>`;
+  }
+}
+
+async function sendAdminNotification() {
+  const message = String(($("notif-message") || {}).value || "").trim();
+  const photos = state.notifPhotoFiles || [];
+  if (!message && !photos.length) {
+    toast("Message ou photo requis");
+    return;
+  }
+  const manual = Array.from(state.notifSelectedIds);
+  if (!manual.length && !state.notifCriterion) {
+    toast("Choisissez un critere ou des users");
+    return;
+  }
+
+  // Apercu count avant confirm
+  let countHint = "?";
+  try {
+    const previewBody = manual.length
+      ? { userIds: manual }
+      : { criterion: state.notifCriterion, params: state.notifParams || {} };
+    const prev = await api("/api/admin/notifications/preview", previewBody);
+    countHint = String(prev.count || 0);
+  } catch (e) {
+    /* ignore */
+  }
+  if (!confirm(`Envoyer a ${countHint} destinataire(s) ?`)) return;
+
+  const btn = $("notif-send-btn");
+  const status = $("notif-status");
+  if (btn) btn.disabled = true;
+  if (status) {
+    status.hidden = false;
+    status.textContent = "Envoi en cours…";
+  }
+
+  try {
+    const fd = new FormData();
+    fd.append("message", message);
+    if (manual.length) {
+      fd.append("userIds", JSON.stringify(manual));
+    } else {
+      fd.append("criterion", state.notifCriterion);
+      fd.append("params", JSON.stringify(state.notifParams || {}));
+    }
+    photos.forEach((f) => fd.append("photos", f));
+
+    const opt = {
+      method: "POST",
+      headers: {
+        "X-Telegram-Init-Data": (tg && tg.initData) ? tg.initData : "",
+      },
+      body: fd,
+    };
+    const r = await fetch("/api/admin/notifications/send", opt);
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    if (!r.ok) throw new Error(data.error || `Erreur ${r.status}`);
+    toast(`Envoi lance — ${data.queued || 0} destinataire(s)`);
+    if (status) {
+      status.textContent = `Lance : ${data.queued || 0} destinataire(s), ${data.photos || 0} photo(s).`;
+    }
+  } catch (e) {
+    toast(e.message || "Echec envoi");
+    if (status) status.textContent = e.message || "Echec";
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function setMaCommandeNav(visible) {
@@ -775,9 +1438,18 @@ function openAdminOrderDetail(orderId) {
         .map((it) => `• ${it.quantity || 1}× ${it.name || it.loyaltyId || "?"}`)
         .join("\n");
       const place = [o.storeName, o.storeCity].filter(Boolean).join(" · ");
+      const pickupName = [o.pickupPrenom, o.pickupNom].filter(Boolean).join(" ");
+      let pickupTime = "";
+      if (o.pickupAt) {
+        const d = new Date(o.pickupAt);
+        pickupTime = Number.isNaN(d.getTime())
+          ? String(o.pickupAt)
+          : d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      }
       box.innerHTML = `
         <div class="info-line"><span>N°</span><span>${escapeHtml(String(o.orderNumber || o.id))}</span></div>
         <p class="info-note">Resto : ${escapeHtml(place || "—")}</p>
+        <p class="info-note">Retrait : ${escapeHtml(pickupName || "—")} · ${escapeHtml(pickupTime || "—")}</p>
         <p class="info-note">Points : ${escapeHtml(String(o.totalPoints != null ? o.totalPoints : "—"))}</p>
         <p class="info-note">Total : ${o.totalEur != null ? escapeHtml(Number(o.totalEur).toFixed(2)) + " EUR" : "—"}</p>
         <p class="info-note">User #${escapeHtml(String(o.userId != null ? o.userId : "—"))}</p>
@@ -828,7 +1500,199 @@ async function adminCompleteOrder() {
     state.adminOrderId = null;
     renderAdminOrders();
     showScreen("commande");
-    setNav("commande");
+    setNav("admin");
+    refreshAdminBadge();
+  } catch (e) {
+    toast(e.message || "Echec");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function revokePreuveObjectUrls() {
+  (state._preuveObjectUrls || []).forEach((u) => {
+    try { URL.revokeObjectURL(u); } catch (e) {}
+  });
+  state._preuveObjectUrls = [];
+}
+
+async function fetchAuthBlob(path) {
+  const opt = {
+    headers: {
+      "X-Telegram-Init-Data": (tg && tg.initData) ? tg.initData : "",
+    },
+  };
+  const r = await fetch(path, opt);
+  if (!r.ok) {
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    throw new Error(data.error || `Erreur ${r.status}`);
+  }
+  return r.blob();
+}
+
+function renderAdminPaiements() {
+  const list = $("admin-paiements-list");
+  const empty = $("admin-paiements-empty");
+  if (!list || !empty) return;
+  list.innerHTML = "";
+  empty.hidden = false;
+  empty.textContent = "Chargement…";
+
+  api("/api/admin/paiements")
+    .then((data) => {
+      list.innerHTML = "";
+      const rows = data.paiements || [];
+      if (!rows.length) {
+        empty.textContent = "File vide.";
+        empty.hidden = false;
+        return;
+      }
+      empty.hidden = true;
+      rows.forEach((p) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "queue-item queue-item-btn";
+        row.textContent = p.label || `${p.clientName || "—"} - ${p.id || "—"}`;
+        row.onclick = () => openAdminPaiementDetail(p.id);
+        list.appendChild(row);
+      });
+    })
+    .catch((e) => {
+      empty.textContent = e.message || "Impossible de charger la file.";
+      empty.hidden = false;
+    });
+}
+
+function openAdminPaiementDetail(demandeId) {
+  state.adminPaiementId = demandeId;
+  revokePreuveObjectUrls();
+  const box = $("admin-paiement-detail");
+  const preuvesBox = $("admin-paiement-preuves");
+  if (box) box.innerHTML = "<p class='info-note'>Chargement…</p>";
+  if (preuvesBox) preuvesBox.innerHTML = "";
+  showScreen("paiement-detail");
+
+  api(`/api/admin/paiements/${demandeId}`)
+    .then(async (data) => {
+      const p = data.paiement;
+      if (!p) throw new Error("Demande introuvable");
+      const cur = p.currency || "EUR";
+      box.innerHTML = `
+        <div class="info-line"><span>N°</span><span>${escapeHtml(String(p.id))}</span></div>
+        <div class="info-line"><span>Client</span><span>${escapeHtml(p.clientName || "—")}</span></div>
+        <div class="info-line"><span>Montant</span><span>${p.montant != null ? escapeHtml(Number(p.montant).toFixed(2) + " " + cur) : "—"}</span></div>
+        <div class="info-line"><span>Moyen</span><span>${escapeHtml(p.moyenNom || "—")}</span></div>
+        <p class="info-note">Lien : ${escapeHtml(p.lien || "—")}</p>
+        <p class="info-note">Finalise : ${escapeHtml(p.finalizedAt || "—")}</p>
+        <p class="info-note">Preuves : ${escapeHtml(String(p.preuveCount != null ? p.preuveCount : (p.preuves || []).length))}</p>`;
+
+      if (preuvesBox) {
+        preuvesBox.innerHTML = "";
+        const preuves = p.preuves || [];
+        if (!preuves.length) {
+          preuvesBox.innerHTML = `<p class="info-note">Aucune preuve.</p>`;
+        } else {
+          for (const pr of preuves) {
+            const wrap = document.createElement("div");
+            wrap.className = "admin-preuve-item";
+            wrap.innerHTML = `<div class="c-opts">${escapeHtml(pr.filename || "preuve")}</div>`;
+            try {
+              const blob = await fetchAuthBlob(pr.url);
+              const url = URL.createObjectURL(blob);
+              state._preuveObjectUrls.push(url);
+              const mime = (pr.mime || blob.type || "").toLowerCase();
+              if (mime.includes("pdf")) {
+                const a = document.createElement("a");
+                a.href = url;
+                a.target = "_blank";
+                a.rel = "noopener";
+                a.className = "secondary-btn";
+                a.textContent = "Ouvrir PDF";
+                wrap.appendChild(a);
+              } else {
+                const img = document.createElement("img");
+                img.className = "admin-preuve-img";
+                img.src = url;
+                img.alt = pr.filename || "preuve";
+                wrap.appendChild(img);
+              }
+            } catch (e) {
+              const err = document.createElement("p");
+              err.className = "info-note";
+              err.textContent = e.message || "Preuve indisponible";
+              wrap.appendChild(err);
+            }
+            preuvesBox.appendChild(wrap);
+          }
+        }
+      }
+    })
+    .catch((e) => {
+      toast(e.message || "Erreur");
+      showScreen("paiement");
+    });
+}
+
+function openAdminPaiementUserInfo() {
+  if (!state.adminPaiementId) return;
+  const box = $("admin-paiement-user-box");
+  if (box) box.innerHTML = "<p class='info-note'>Chargement…</p>";
+  showScreen("paiement-user");
+  api(`/api/admin/paiements/${state.adminPaiementId}/user`)
+    .then((data) => {
+      const u = data.user || {};
+      box.innerHTML = `
+        <div class="info-line"><span>ID</span><span>${escapeHtml(String(u.id ?? "—"))}</span></div>
+        <div class="info-line"><span>Telegram</span><span>${escapeHtml(String(u.telegramId ?? "—"))}</span></div>
+        <div class="info-line"><span>Username</span><span>${escapeHtml(u.username ? "@" + u.username : "—")}</span></div>
+        <div class="info-line"><span>Prenom</span><span>${escapeHtml(u.firstName || "—")}</span></div>
+        <div class="info-line"><span>Nom</span><span>${escapeHtml(u.lastName || "—")}</span></div>
+        <div class="info-line"><span>Solde</span><span>${escapeHtml(u.balance != null ? Number(u.balance).toFixed(2) + " EUR" : "—")}</span></div>
+        <div class="info-line"><span>Achats</span><span>${escapeHtml(String(u.purchaseCount ?? "—"))}</span></div>
+        <p class="info-note">Dernier achat : ${escapeHtml(u.lastPurchaseAt || "—")}</p>`;
+    })
+    .catch((e) => {
+      toast(e.message || "Erreur user info");
+      showScreen("paiement-detail");
+    });
+}
+
+async function adminAcceptPaiement() {
+  if (!state.adminPaiementId) return;
+  if (!confirm("Accepter et crediter le solde ?")) return;
+  const btn = $("admin-paiement-accept");
+  if (btn) btn.disabled = true;
+  try {
+    await api(`/api/admin/paiements/${state.adminPaiementId}/accept`, {});
+    toast("Paiement accepte");
+    state.adminPaiementId = null;
+    revokePreuveObjectUrls();
+    renderAdminPaiements();
+    showScreen("paiement");
+    setNav("admin");
+    refreshAdminBadge();
+  } catch (e) {
+    toast(e.message || "Echec");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function adminRejectPaiement() {
+  if (!state.adminPaiementId) return;
+  if (!confirm("Refuser cette demande ?")) return;
+  const btn = $("admin-paiement-reject");
+  if (btn) btn.disabled = true;
+  try {
+    await api(`/api/admin/paiements/${state.adminPaiementId}/reject`, {});
+    toast("Paiement refuse");
+    state.adminPaiementId = null;
+    revokePreuveObjectUrls();
+    renderAdminPaiements();
+    showScreen("paiement");
+    setNav("admin");
+    refreshAdminBadge();
   } catch (e) {
     toast(e.message || "Echec");
   } finally {
@@ -851,7 +1715,8 @@ async function adminCancelOrder() {
     state.adminOrderId = null;
     renderAdminOrders();
     showScreen("commande");
-    setNav("commande");
+    setNav("admin");
+    refreshAdminBadge();
   } catch (e) {
     toast(e.message || "Echec annulation");
   } finally {
@@ -865,6 +1730,14 @@ function renderOrderCardHtml(o) {
     .map((it) => `• ${it.quantity || 1}× ${escapeHtml(it.name || it.loyaltyId || "?")}`)
     .join("<br/>");
   const place = [o.storeName, o.storeCity].filter(Boolean).join(" · ");
+  const pickupName = [o.pickupPrenom, o.pickupNom].filter(Boolean).join(" ");
+  let pickupTime = "";
+  if (o.pickupAt) {
+    const d = new Date(o.pickupAt);
+    pickupTime = Number.isNaN(d.getTime())
+      ? String(o.pickupAt)
+      : d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  }
   let extra = "";
   if (o.annulee) {
     extra = `<div class="ma-commande-banner cancel">Commande annulee</div>
@@ -885,6 +1758,7 @@ function renderOrderCardHtml(o) {
       ${extra}
       <div class="info-line"><span>N°</span><span>${escapeHtml(String(o.orderNumber || o.id || "—"))}</span></div>
       <p class="info-note">${escapeHtml(place || "—")}</p>
+      <p class="info-note">Retrait : ${escapeHtml(pickupName || "—")} · ${escapeHtml(pickupTime || "—")}</p>
       <p class="info-note">${o.totalEur != null ? escapeHtml(Number(o.totalEur).toFixed(2)) + " EUR" : ""} ${o.totalPoints != null ? "· " + escapeHtml(String(o.totalPoints)) + " pts" : ""}</p>
       <div class="ma-commande-items">${items || "—"}</div>
     </div>`;
@@ -1017,10 +1891,6 @@ function parseTopupMontantRaw(raw) {
   const cents = Math.round(v * 100);
   if (Math.abs(v * 100 - cents) > 1e-9) return { ok: false, value: v };
   return { ok: true, value: cents / 100 };
-}
-
-function topupMontantValue() {
-  return parseTopupMontantRaw(($("topup-montant") || {}).value).value;
 }
 
 function validateTopupMontantLive() {
@@ -1310,7 +2180,7 @@ function renderWallet() {
       state.adminOrderId = null;
       renderAdminOrders();
       showScreen("commande");
-      setNav("commande");
+      setNav("admin");
     };
   }
   const userInfoBtn = $("admin-user-info-btn");
@@ -1339,7 +2209,663 @@ function renderWallet() {
   }
   const cancelFin = $("admin-cancel-finalize");
   if (cancelFin) cancelFin.onclick = () => adminCancelOrder();
+
+  const payBack = $("admin-paiement-back");
+  if (payBack) {
+    payBack.onclick = () => {
+      state.adminPaiementId = null;
+      revokePreuveObjectUrls();
+      renderAdminPaiements();
+      showScreen("paiement");
+      setNav("admin");
+    };
+  }
+  const payUserBtn = $("admin-paiement-user-btn");
+  if (payUserBtn) payUserBtn.onclick = () => openAdminPaiementUserInfo();
+  const payUserBack = $("admin-paiement-user-back");
+  if (payUserBack) {
+    payUserBack.onclick = () => showScreen("paiement-detail");
+  }
+  const payAccept = $("admin-paiement-accept");
+  if (payAccept) payAccept.onclick = () => adminAcceptPaiement();
+  const payReject = $("admin-paiement-reject");
+  if (payReject) payReject.onclick = () => adminRejectPaiement();
+
+  const gestionBack = $("gestion-back");
+  if (gestionBack) {
+    gestionBack.onclick = () => {
+      state.gestionResource = null;
+      renderGestionHub();
+      showScreen("gestion");
+      setNav("admin");
+    };
+  }
+
+  const notifPreview = $("notif-preview-btn");
+  if (notifPreview) notifPreview.onclick = () => previewNotifTargets();
+  const notifSearch = $("notif-user-search");
+  if (notifSearch) notifSearch.onclick = () => searchNotifUsers();
+  const notifQ = $("notif-user-q");
+  if (notifQ) {
+    notifQ.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") searchNotifUsers();
+    });
+  }
+  const notifClear = $("notif-clear-users");
+  if (notifClear) {
+    notifClear.onclick = () => {
+      state.notifSelectedIds = new Set();
+      searchNotifUsers().catch(() => {});
+      updateNotifTargetSummary();
+    };
+  }
+  const notifSend = $("notif-send-btn");
+  if (notifSend) notifSend.onclick = () => sendAdminNotification();
+
+  const staffSearch = $("staff-user-search");
+  if (staffSearch) staffSearch.onclick = () => searchStaffUsers();
+  const staffQ = $("staff-user-q");
+  if (staffQ) {
+    staffQ.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") searchStaffUsers();
+    });
+  }
+  const staffSave = $("staff-save-btn");
+  if (staffSave) staffSave.onclick = () => saveStaffMember();
+  const staffRemove = $("staff-remove-btn");
+  if (staffRemove) staffRemove.onclick = () => removeStaffMember();
+  const staffCancel = $("staff-cancel-edit");
+  if (staffCancel) {
+    staffCancel.onclick = () => {
+      state.staffEditUserId = null;
+      const box = $("staff-edit-box");
+      if (box) box.hidden = true;
+      loadStaffLogs();
+    };
+  }
+  const staffLogs = $("staff-logs-refresh");
+  if (staffLogs) staffLogs.onclick = () => loadStaffLogs();
 })();
+
+/* ---------- Gestion (admin) ---------- */
+function renderGestionHub() {
+  const box = $("gestion-resources");
+  const empty = $("gestion-hub-empty");
+  if (!box) return;
+  box.innerHTML = "";
+  if (empty) {
+    empty.hidden = false;
+    empty.textContent = "Chargement…";
+  }
+
+  const paint = (resources) => {
+    box.innerHTML = "";
+    if (!resources.length) {
+      if (empty) {
+        empty.textContent = "Aucune ressource.";
+        empty.hidden = false;
+      }
+      return;
+    }
+    if (empty) empty.hidden = true;
+    resources.forEach((r) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "queue-item queue-item-btn gestion-resource-btn";
+      btn.innerHTML = `
+        <div class="gestion-res-label">${escapeHtml(r.label)}</div>
+        <div class="c-opts">${escapeHtml(r.description || "")}</div>`;
+      btn.onclick = () => openGestionResource(r);
+      box.appendChild(btn);
+    });
+  };
+
+  if (state.gestionMeta && state.gestionMeta.length) {
+    paint(state.gestionMeta);
+    return;
+  }
+
+  api("/api/admin/gestion/meta")
+    .then((data) => {
+      state.gestionMeta = data.resources || [];
+      paint(state.gestionMeta);
+    })
+    .catch((e) => {
+      if (empty) {
+        empty.textContent = e.message || "Erreur";
+        empty.hidden = false;
+      }
+    });
+}
+
+function openGestionResource(res) {
+  state.gestionResource = res.id;
+  const title = $("gestion-resource-title");
+  const desc = $("gestion-resource-desc");
+  if (title) title.textContent = res.label || res.id;
+  if (desc) desc.textContent = res.description || "";
+  const body = $("gestion-body");
+  const empty = $("gestion-empty");
+  const toolbar = $("gestion-toolbar");
+  if (body) body.innerHTML = "";
+  if (toolbar) {
+    toolbar.innerHTML = "";
+    toolbar.hidden = true;
+  }
+  if (empty) {
+    empty.hidden = false;
+    empty.textContent = "Chargement…";
+  }
+  showScreen("gestion-resource");
+  setNav("admin");
+
+  const loaders = {
+    config: loadGestionConfig,
+    articles: loadGestionArticles,
+    blacklist: loadGestionBlacklist,
+    moyens: loadGestionMoyens,
+    users: loadGestionUsers,
+  };
+  const fn = loaders[res.id];
+  if (!fn) {
+    if (empty) empty.textContent = "Ressource inconnue.";
+    return;
+  }
+  fn().catch((e) => {
+    if (empty) {
+      empty.textContent = e.message || "Erreur";
+      empty.hidden = false;
+    }
+  });
+}
+
+function _gestionReady() {
+  const empty = $("gestion-empty");
+  if (empty) empty.hidden = true;
+  return $("gestion-body");
+}
+
+async function loadGestionConfig() {
+  const data = await api("/api/admin/gestion/config");
+  const cfg = data.config || {};
+  const body = _gestionReady();
+  if (!body) return;
+  body.innerHTML = `
+    <div class="gestion-form">
+      <label class="field-label" for="g-cfg-reduction">Reduction (%)</label>
+      <input class="field-input" id="g-cfg-reduction" type="number" min="0" max="100" step="0.1" value="${escapeHtml(String(cfg.reduction ?? ""))}" />
+      <label class="field-label" for="g-cfg-currency">Devise</label>
+      <input class="field-input" id="g-cfg-currency" type="text" maxlength="8" value="${escapeHtml(cfg.currency || "EUR")}" />
+      <label class="field-label" for="g-cfg-version">Version affichee</label>
+      <input class="field-input" id="g-cfg-version" type="text" maxlength="32" value="${escapeHtml(cfg.version || "")}" />
+      <label class="field-label" for="g-cfg-admin">Admin Telegram ID</label>
+      <input class="field-input" id="g-cfg-admin" type="text" inputmode="numeric" value="${escapeHtml(cfg.admin != null ? String(cfg.admin) : "")}" />
+      <label class="field-label gestion-check-row">
+        <input type="checkbox" id="g-cfg-actif" ${cfg.actif ? "checked" : ""} />
+        Shop actif
+      </label>
+      <label class="field-label" for="g-cfg-ph">Prochaine heure (si inactif)</label>
+      <input class="field-input" id="g-cfg-ph" type="text" value="${escapeHtml(cfg.prochaine_heure || "")}" />
+      <button class="primary-btn" id="g-cfg-save" type="button">Enregistrer</button>
+    </div>`;
+  const save = $("g-cfg-save");
+  if (save) {
+    save.onclick = async () => {
+      save.disabled = true;
+      try {
+        const actif = !!($("g-cfg-actif") || {}).checked;
+        const payload = {
+          reduction: Number(($("g-cfg-reduction") || {}).value),
+          currency: ($("g-cfg-currency") || {}).value || "EUR",
+          version: ($("g-cfg-version") || {}).value || "1",
+          admin: ($("g-cfg-admin") || {}).value,
+          actif,
+          prochaineHeure: actif ? null : (($("g-cfg-ph") || {}).value || null),
+        };
+        await api("/api/admin/gestion/config", payload, "PATCH");
+        toast("Variables enregistrees");
+        await loadGestionConfig();
+      } catch (e) {
+        toast(e.message || "Erreur");
+      } finally {
+        save.disabled = false;
+      }
+    };
+  }
+}
+
+function quoteArticleRawField(value) {
+  return `"${String(value ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function formatArticleRawLine(art) {
+  if (!art) return "";
+  const price = art.price != null ? String(art.price) : "";
+  const cost = art.cost != null ? String(art.cost) : "";
+  return [
+    quoteArticleRawField(art.kfcItemId || ""),
+    quoteArticleRawField(art.name || ""),
+    quoteArticleRawField(art.label || ""),
+    price,
+    cost,
+  ].join(" ");
+}
+
+/** Parse `"kfc_item_id" "name" "label" price cost` (guillemets pour les 3 textes). */
+function parseArticleRawLine(line) {
+  const s = String(line || "").trim();
+  if (!s) throw new Error("Ligne brute vide");
+  const tokens = [];
+  let i = 0;
+  while (i < s.length) {
+    while (i < s.length && /\s/.test(s[i])) i += 1;
+    if (i >= s.length) break;
+    if (s[i] === '"') {
+      i += 1;
+      let buf = "";
+      while (i < s.length && s[i] !== '"') {
+        if (s[i] === "\\" && i + 1 < s.length) {
+          buf += s[i + 1];
+          i += 2;
+          continue;
+        }
+        buf += s[i];
+        i += 1;
+      }
+      if (i >= s.length || s[i] !== '"') {
+        throw new Error('Guillemet fermant manquant — ex. "loyalty-3631" "Nom" "label" 1.00 300');
+      }
+      i += 1;
+      tokens.push(buf);
+    } else {
+      const start = i;
+      while (i < s.length && !/\s/.test(s[i])) i += 1;
+      tokens.push(s.slice(start, i));
+    }
+  }
+  if (tokens.length !== 5) {
+    throw new Error('Attendu 5 champs : "kfc_item_id" "name" "label" price cost');
+  }
+  const price = Number(tokens[3]);
+  const cost = Number(tokens[4]);
+  if (!Number.isFinite(price)) throw new Error("price invalide");
+  if (!Number.isFinite(cost)) throw new Error("cost invalide");
+  return {
+    kfcItemId: tokens[0],
+    name: tokens[1],
+    label: tokens[2],
+    price,
+    cost,
+  };
+}
+
+async function loadGestionArticles() {
+  const toolbar = $("gestion-toolbar");
+  if (toolbar) {
+    toolbar.hidden = false;
+    toolbar.innerHTML = `
+      <input class="field-input gestion-search" id="g-art-q" type="search" placeholder="Rechercher…" autocomplete="off" />
+      <button class="secondary-btn gestion-toolbar-btn" id="g-art-new" type="button">+ Article</button>`;
+  }
+  const q = (($("g-art-q") || {}).value || "").trim();
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+  const data = await api(`/api/admin/gestion/articles${qs}`);
+  const articles = data.articles || [];
+  const body = _gestionReady();
+  if (!body) return;
+
+  const paintForm = (art) => {
+    const isNew = !art || !art.id;
+    const rawPrefill = escapeHtml(formatArticleRawLine(art));
+    body.innerHTML = `
+      <div class="gestion-form">
+        <label class="field-label gestion-check-row" for="g-art-raw-mode">
+          <input id="g-art-raw-mode" type="checkbox" />
+          Formulaire brut
+        </label>
+        <div id="g-art-fields-normal">
+          <label class="field-label" for="g-art-kfc">KFC item id</label>
+          <input class="field-input" id="g-art-kfc" type="text" value="${escapeHtml((art && art.kfcItemId) || "")}" />
+          <label class="field-label" for="g-art-name">Nom</label>
+          <input class="field-input" id="g-art-name" type="text" value="${escapeHtml((art && art.name) || "")}" />
+          <label class="field-label" for="g-art-label">Label</label>
+          <input class="field-input" id="g-art-label" type="text" value="${escapeHtml((art && art.label) || "")}" />
+          <label class="field-label" for="g-art-price">Prix</label>
+          <input class="field-input" id="g-art-price" type="number" min="0" step="0.01" value="${escapeHtml(art && art.price != null ? String(art.price) : "")}" />
+          <label class="field-label" for="g-art-cost">Points (cost)</label>
+          <input class="field-input" id="g-art-cost" type="number" min="0" step="1" value="${escapeHtml(art && art.cost != null ? String(art.cost) : "")}" />
+        </div>
+        <div id="g-art-fields-raw" hidden>
+          <label class="field-label" for="g-art-raw">Ligne brute</label>
+          <textarea class="field-input gestion-raw-input" id="g-art-raw" rows="3" spellcheck="false" placeholder='"loyalty-3631" "Sauce banane XL" "édition spécial" 1.00 300'>${rawPrefill}</textarea>
+          <p class="info-note">Format : "kfc_item_id" "name" "label" price cost</p>
+        </div>
+        <button class="primary-btn" id="g-art-save" type="button">${isNew ? "Creer" : "Enregistrer"}</button>
+        ${isNew ? "" : '<button class="danger-btn" id="g-art-del" type="button">Supprimer</button>'}
+        <button class="secondary-btn" id="g-art-cancel" type="button">Retour liste</button>
+      </div>`;
+    const syncMode = () => {
+      const rawOn = !!(($("g-art-raw-mode") || {}).checked);
+      const normal = $("g-art-fields-normal");
+      const rawBox = $("g-art-fields-raw");
+      if (normal) normal.hidden = rawOn;
+      if (rawBox) rawBox.hidden = !rawOn;
+    };
+    const mode = $("g-art-raw-mode");
+    if (mode) mode.onchange = syncMode;
+    syncMode();
+    $("g-art-cancel").onclick = () => loadGestionArticles().catch((e) => toast(e.message));
+    $("g-art-save").onclick = async () => {
+      const btn = $("g-art-save");
+      btn.disabled = true;
+      let payload;
+      try {
+        if (($("g-art-raw-mode") || {}).checked) {
+          payload = parseArticleRawLine(($("g-art-raw") || {}).value || "");
+        } else {
+          payload = {
+            kfcItemId: ($("g-art-kfc") || {}).value || "",
+            name: ($("g-art-name") || {}).value || "",
+            label: ($("g-art-label") || {}).value || "",
+            price: Number(($("g-art-price") || {}).value),
+            cost: ($("g-art-cost") || {}).value === "" ? null : Number(($("g-art-cost") || {}).value),
+          };
+        }
+      } catch (e) {
+        toast(e.message || "Ligne brute invalide");
+        btn.disabled = false;
+        return;
+      }
+      try {
+        if (isNew) await api("/api/admin/gestion/articles", payload);
+        else await api(`/api/admin/gestion/articles/${art.id}`, payload, "PATCH");
+        toast(isNew ? "Article cree" : "Article mis a jour");
+        await loadGestionArticles();
+      } catch (e) {
+        toast(e.message || "Erreur");
+        btn.disabled = false;
+      }
+    };
+    const del = $("g-art-del");
+    if (del) {
+      del.onclick = async () => {
+        if (!confirm("Supprimer cet article ?")) return;
+        try {
+          await api(`/api/admin/gestion/articles/${art.id}`, undefined, "DELETE");
+          toast("Article supprime");
+          await loadGestionArticles();
+        } catch (e) {
+          toast(e.message || "Erreur");
+        }
+      };
+    }
+  };
+
+  if (!articles.length) {
+    body.innerHTML = `<div class="empty-hint">Aucun article.</div>`;
+  } else {
+    const list = document.createElement("div");
+    list.className = "queue-list";
+    articles.forEach((a) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "queue-item queue-item-btn";
+      row.innerHTML = `
+        <div class="gestion-res-label">${escapeHtml(a.label || a.name || a.kfcItemId)}</div>
+        <div class="c-opts">${escapeHtml(a.kfcItemId || "")} · ${a.price != null ? Number(a.price).toFixed(2) : "—"} · ${a.cost != null ? a.cost + " pts" : "—"}</div>`;
+      row.onclick = () => paintForm(a);
+      list.appendChild(row);
+    });
+    body.innerHTML = "";
+    body.appendChild(list);
+  }
+
+  const search = $("g-art-q");
+  if (search) {
+    search.onkeydown = (e) => {
+      if (e.key === "Enter") loadGestionArticles().catch((err) => toast(err.message));
+    };
+  }
+  const neu = $("g-art-new");
+  if (neu) neu.onclick = () => paintForm(null);
+}
+
+async function loadGestionBlacklist() {
+  const toolbar = $("gestion-toolbar");
+  if (toolbar) {
+    toolbar.hidden = false;
+    toolbar.innerHTML = `
+      <input class="field-input" id="g-bl-id" type="text" placeholder="store id" autocomplete="off" />
+      <input class="field-input" id="g-bl-name" type="text" placeholder="nom" autocomplete="off" />
+      <input class="field-input" id="g-bl-city" type="text" placeholder="ville" autocomplete="off" />
+      <button class="secondary-btn gestion-toolbar-btn" id="g-bl-add" type="button">Ajouter</button>`;
+  }
+  const data = await api("/api/admin/gestion/blacklist");
+  const stores = data.stores || [];
+  const body = _gestionReady();
+  if (!body) return;
+  if (!stores.length) {
+    body.innerHTML = `<div class="empty-hint">Blacklist vide.</div>`;
+  } else {
+    const list = document.createElement("div");
+    list.className = "queue-list";
+    stores.forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "queue-item gestion-row";
+      row.innerHTML = `
+        <div class="gestion-row-main">
+          <div class="gestion-res-label">${escapeHtml(s.name || s.storeId)}</div>
+          <div class="c-opts">${escapeHtml(s.city || "")} · ${escapeHtml(s.storeId)}${s.reason ? " · " + escapeHtml(s.reason) : ""}</div>
+        </div>
+        <button class="gestion-mini-danger" type="button" data-id="${escapeHtml(s.storeId)}">Retirer</button>`;
+      row.querySelector("button").onclick = async () => {
+        if (!confirm("Retirer de la blacklist ?")) return;
+        try {
+          await api(`/api/admin/gestion/blacklist/${encodeURIComponent(s.storeId)}`, undefined, "DELETE");
+          toast("Retire");
+          await loadGestionBlacklist();
+        } catch (e) {
+          toast(e.message || "Erreur");
+        }
+      };
+      list.appendChild(row);
+    });
+    body.innerHTML = "";
+    body.appendChild(list);
+  }
+  const add = $("g-bl-add");
+  if (add) {
+    add.onclick = async () => {
+      const storeId = (($("g-bl-id") || {}).value || "").trim();
+      if (!storeId) {
+        toast("store id requis");
+        return;
+      }
+      add.disabled = true;
+      try {
+        await api("/api/admin/gestion/blacklist", {
+          storeId,
+          name: (($("g-bl-name") || {}).value || "").trim(),
+          city: (($("g-bl-city") || {}).value || "").trim(),
+          reason: "manual",
+        });
+        toast("Ajoute");
+        await loadGestionBlacklist();
+      } catch (e) {
+        toast(e.message || "Erreur");
+        add.disabled = false;
+      }
+    };
+  }
+}
+
+async function loadGestionMoyens() {
+  const toolbar = $("gestion-toolbar");
+  if (toolbar) {
+    toolbar.hidden = false;
+    toolbar.innerHTML = `
+      <input class="field-input" id="g-moy-nom" type="text" placeholder="Nom" autocomplete="off" />
+      <input class="field-input" id="g-moy-lien" type="text" placeholder="Lien" autocomplete="off" />
+      <button class="secondary-btn gestion-toolbar-btn" id="g-moy-add" type="button">Ajouter</button>`;
+  }
+  const data = await api("/api/admin/gestion/moyens");
+  const moyens = data.moyens || [];
+  const body = _gestionReady();
+  if (!body) return;
+
+  const editForm = (m) => {
+    body.innerHTML = `
+      <div class="gestion-form">
+        <label class="field-label" for="g-moy-e-nom">Nom</label>
+        <input class="field-input" id="g-moy-e-nom" type="text" value="${escapeHtml(m.nom || "")}" />
+        <label class="field-label" for="g-moy-e-lien">Lien</label>
+        <input class="field-input" id="g-moy-e-lien" type="text" value="${escapeHtml(m.lien || "")}" />
+        <button class="primary-btn" id="g-moy-save" type="button">Enregistrer</button>
+        <button class="danger-btn" id="g-moy-del" type="button">Supprimer</button>
+        <button class="secondary-btn" id="g-moy-cancel" type="button">Retour liste</button>
+      </div>`;
+    $("g-moy-cancel").onclick = () => loadGestionMoyens().catch((e) => toast(e.message));
+    $("g-moy-save").onclick = async () => {
+      try {
+        await api(`/api/admin/gestion/moyens/${m.id}`, {
+          nom: ($("g-moy-e-nom") || {}).value || "",
+          lien: ($("g-moy-e-lien") || {}).value || "",
+        }, "PATCH");
+        toast("Moyen mis a jour");
+        await loadGestionMoyens();
+      } catch (e) {
+        toast(e.message || "Erreur");
+      }
+    };
+    $("g-moy-del").onclick = async () => {
+      if (!confirm("Supprimer ce moyen ?")) return;
+      try {
+        await api(`/api/admin/gestion/moyens/${m.id}`, undefined, "DELETE");
+        toast("Supprime");
+        await loadGestionMoyens();
+      } catch (e) {
+        toast(e.message || "Erreur");
+      }
+    };
+  };
+
+  if (!moyens.length) {
+    body.innerHTML = `<div class="empty-hint">Aucun moyen.</div>`;
+  } else {
+    const list = document.createElement("div");
+    list.className = "queue-list";
+    moyens.forEach((m) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "queue-item queue-item-btn";
+      row.innerHTML = `
+        <div class="gestion-res-label">${escapeHtml(m.nom)}</div>
+        <div class="c-opts">${escapeHtml(m.lien || "—")}</div>`;
+      row.onclick = () => editForm(m);
+      list.appendChild(row);
+    });
+    body.innerHTML = "";
+    body.appendChild(list);
+  }
+
+  const add = $("g-moy-add");
+  if (add) {
+    add.onclick = async () => {
+      const nom = (($("g-moy-nom") || {}).value || "").trim();
+      if (!nom) {
+        toast("nom requis");
+        return;
+      }
+      add.disabled = true;
+      try {
+        await api("/api/admin/gestion/moyens", {
+          nom,
+          lien: (($("g-moy-lien") || {}).value || "").trim(),
+        });
+        toast("Moyen ajoute");
+        await loadGestionMoyens();
+      } catch (e) {
+        toast(e.message || "Erreur");
+        add.disabled = false;
+      }
+    };
+  }
+}
+
+async function loadGestionUsers() {
+  const toolbar = $("gestion-toolbar");
+  if (toolbar) {
+    toolbar.hidden = false;
+    toolbar.innerHTML = `
+      <input class="field-input gestion-search" id="g-user-q" type="search" placeholder="Telegram / username…" autocomplete="off" />
+      <button class="secondary-btn gestion-toolbar-btn" id="g-user-go" type="button">Chercher</button>`;
+  }
+  const q = (($("g-user-q") || {}).value || "").trim();
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+  const data = await api(`/api/admin/gestion/users${qs}`);
+  const users = data.users || [];
+  const body = _gestionReady();
+  if (!body) return;
+
+  const editUser = (u) => {
+    body.innerHTML = `
+      <div class="gestion-form">
+        <div class="info-line"><span>ID</span><span>${escapeHtml(String(u.id))}</span></div>
+        <div class="info-line"><span>Telegram</span><span>${escapeHtml(String(u.telegramId))}</span></div>
+        <div class="info-line"><span>Username</span><span>${escapeHtml(u.username ? "@" + u.username : "—")}</span></div>
+        <label class="field-label" for="g-user-bal">Solde</label>
+        <input class="field-input" id="g-user-bal" type="number" min="0" step="0.01" value="${escapeHtml(String(u.balance ?? 0))}" />
+        <label class="field-label gestion-check-row">
+          <input type="checkbox" id="g-user-active" ${u.isActive ? "checked" : ""} />
+          Compte actif
+        </label>
+        <button class="primary-btn" id="g-user-save" type="button">Enregistrer</button>
+        <button class="secondary-btn" id="g-user-cancel" type="button">Retour liste</button>
+      </div>`;
+    $("g-user-cancel").onclick = () => loadGestionUsers().catch((e) => toast(e.message));
+    $("g-user-save").onclick = async () => {
+      try {
+        await api(`/api/admin/gestion/users/${u.id}`, {
+          balance: Number(($("g-user-bal") || {}).value),
+          isActive: !!($("g-user-active") || {}).checked,
+        }, "PATCH");
+        toast("Utilisateur mis a jour");
+        await loadGestionUsers();
+      } catch (e) {
+        toast(e.message || "Erreur");
+      }
+    };
+  };
+
+  if (!users.length) {
+    body.innerHTML = `<div class="empty-hint">Aucun utilisateur.</div>`;
+  } else {
+    const list = document.createElement("div");
+    list.className = "queue-list";
+    users.forEach((u) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "queue-item queue-item-btn";
+      const name = u.firstName || u.username || String(u.telegramId);
+      row.innerHTML = `
+        <div class="gestion-res-label">${escapeHtml(name)}${u.isActive ? "" : " · inactif"}</div>
+        <div class="c-opts">#${escapeHtml(String(u.id))} · ${escapeHtml(String(u.telegramId))} · ${Number(u.balance || 0).toFixed(2)}</div>`;
+      row.onclick = () => editUser(u);
+      list.appendChild(row);
+    });
+    body.innerHTML = "";
+    body.appendChild(list);
+  }
+
+  const go = $("g-user-go");
+  if (go) go.onclick = () => loadGestionUsers().catch((e) => toast(e.message));
+  const search = $("g-user-q");
+  if (search) {
+    search.onkeydown = (e) => {
+      if (e.key === "Enter") loadGestionUsers().catch((err) => toast(err.message));
+    };
+  }
+}
 
 function renderHistory() {
   const list = $("history-list");
@@ -1391,13 +2917,13 @@ function renderHistory() {
 /* ---------- Démarrage ---------- */
 (async function init() {
   try {
-    const cfg = await api("/api/config");
-    setBalance(cfg.balance != null ? cfg.balance : 0, cfg.currency || "EUR");
-    setDevVersion(cfg);
-    setAdminNav(!!cfg.isAdmin);
-    setMaCommandeNav(!!cfg.hasMaCommande);
-    if (cfg.actif === false) {
-      showShopInactive(cfg.inactiveMessage, cfg.prochaineHeure);
+    const me = await api("/api/me");
+    setBalance(me.balance != null ? me.balance : 0, me.currency || "EUR");
+    setAdminNav(!!me.showAdmin, me.adminAccess, !!me.isFullAdmin);
+    setMaCommandeNav(!!me.hasMaCommande);
+    if (me.pointsLimit != null) state.pointsLimit = me.pointsLimit;
+    if (me.shopOpen === false) {
+      showShopInactive(me.shopMessage, me.prochaineHeure);
       return;
     }
   } catch (e) {
@@ -1406,7 +2932,6 @@ function renderHistory() {
       return;
     }
     setBalance(0, "EUR");
-    setDevVersion(null);
     setAdminNav(false);
     setMaCommandeNav(false);
   }
