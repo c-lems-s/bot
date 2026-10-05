@@ -990,11 +990,29 @@ def api_remove_item():
     return jsonify(payload)
 
 
+@app.route("/api/checkout/pickup-bounds")
+@require_telegram_user
+def api_checkout_pickup_bounds():
+    """Bornes heure de recuperation (Europe/Paris) pour le formulaire checkout."""
+    from webapp.pickup import pickup_bounds_for_client
+
+    return jsonify(pickup_bounds_for_client())
+
+
 @app.route("/api/checkout", methods=["POST"])
 @require_telegram_user
 def api_checkout():
     """Valide le panier : transaction atomique (lock DRAFT + debit + order)."""
     user = g.user
+    body = request.json or {}
+
+    from webapp.pickup import validate_checkout_pickup
+
+    try:
+        pickup = validate_checkout_pickup(body)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     sess = session_store.require_draft_session(user["id"])
     if not sess:
         return jsonify({"error": "Aucune session active"}), 400
@@ -1022,6 +1040,11 @@ def api_checkout():
     order_number = f"L-{order_uuid[:8].upper()}"
     sess = {**sess, "cart": cart}
     snapshot = _order_payload(sess)
+    snapshot["pickup"] = {
+        "nom": pickup["nom"],
+        "prenom": pickup["prenom"],
+        "at": pickup["pickup_at"].isoformat(),
+    }
     items = [
         {
             "loyalty_id": e.get("itemId"),
@@ -1039,6 +1062,7 @@ def api_checkout():
         "total": total_eur,
         "status": "QUEUED",
         "payload": snapshot,
+        "pickup": snapshot["pickup"],
     }
 
     from db.repositories import checkout as checkout_repo
@@ -1057,6 +1081,9 @@ def api_checkout():
             total_eur=total_eur,
             items=items,
             last_order=last_order,
+            pickup_nom=pickup["nom"],
+            pickup_prenom=pickup["prenom"],
+            pickup_at=pickup["pickup_at"],
         )
     except Exception:
         app.logger.exception("Checkout atomique echoue")
@@ -1086,10 +1113,12 @@ def api_checkout():
         from webapp.bot_notify import notify_admin_new_order, notify_user
 
         notify_admin_new_order()
+        pickup_label = pickup["pickup_at"].strftime("%H:%M")
         notify_user(
             user.get("telegram_id"),
             (
                 f"Commande enregistree (n° {order_number}). "
+                f"Retrait {pickup['prenom']} {pickup['nom']} a {pickup_label}. "
                 "Elle est en cours de traitement."
             ),
         )
@@ -1106,6 +1135,12 @@ def api_checkout():
             "currency": get_currency(),
             "status": "QUEUED",
             "order": snapshot,
+            "pickup": {
+                "nom": pickup["nom"],
+                "prenom": pickup["prenom"],
+                "at": pickup["pickup_at"].isoformat(),
+                "time": pickup["pickup_at"].strftime("%H:%M"),
+            },
         }
     )
 

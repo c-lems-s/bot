@@ -22,6 +22,9 @@ def finalize_local_checkout(
     total_eur: float,
     items: List[Dict[str, Any]],
     last_order: Dict[str, Any],
+    pickup_nom: str,
+    pickup_prenom: str,
+    pickup_at,
 ) -> Dict[str, Any]:
     """Une seule transaction : lock session DRAFT, debit, order, confirm.
 
@@ -31,6 +34,8 @@ def finalize_local_checkout(
     """
     total_eur = float(total_eur)
     total_points = max(0, int(total_points or 0))
+    pickup_nom = (pickup_nom or "").strip()
+    pickup_prenom = (pickup_prenom or "").strip()
 
     with get_cursor() as cur:
         cur.execute(
@@ -74,9 +79,13 @@ def finalize_local_checkout(
                 order_uuid, order_number, confirmation_url,
                 store_id, store_name, store_city,
                 status, total_points, total_eur, account_id,
-                user_id, session_id, terminer, annulee
+                user_id, session_id, terminer, annulee,
+                pickup_nom, pickup_prenom, pickup_at
             )
-            VALUES (%s, %s, NULL, %s, %s, %s, 'QUEUED', %s, %s, NULL, %s, %s, FALSE, FALSE)
+            VALUES (
+                %s, %s, NULL, %s, %s, %s, 'QUEUED', %s, %s, NULL, %s, %s,
+                FALSE, FALSE, %s, %s, %s
+            )
             ON CONFLICT (order_uuid) DO NOTHING
             RETURNING id
             """,
@@ -90,6 +99,9 @@ def finalize_local_checkout(
                 total_eur,
                 int(user_id),
                 int(session_id),
+                pickup_nom,
+                pickup_prenom,
+                pickup_at,
             ),
         )
         order_row = cur.fetchone()

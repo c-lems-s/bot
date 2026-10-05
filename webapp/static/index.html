@@ -70,6 +70,26 @@
       <button class="primary-btn" id="go-checkout" disabled>Commander</button>
     </section>
 
+    <!-- Infos retrait avant validation -->
+    <section class="screen" id="screen-checkout-pickup">
+      <button class="back-btn" id="checkout-pickup-back" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>Retour panier</span>
+      </button>
+      <h2 class="screen-title">Infos de retrait</h2>
+      <p class="info-note">Indiquez le nom, le prénom et l’heure de récupération (aujourd’hui, max 23h30).</p>
+      <div class="gestion-form" id="checkout-pickup-form">
+        <label class="field-label" for="checkout-nom">Nom</label>
+        <input class="field-input" id="checkout-nom" type="text" autocomplete="family-name" maxlength="80" />
+        <label class="field-label" for="checkout-prenom">Prénom</label>
+        <input class="field-input" id="checkout-prenom" type="text" autocomplete="given-name" maxlength="80" />
+        <label class="field-label" for="checkout-pickup-time">Heure de récupération</label>
+        <input class="field-input" id="checkout-pickup-time" type="time" step="60" />
+        <p class="info-note" id="checkout-pickup-hint">Entre l’heure actuelle et 23h30 (heure de Paris).</p>
+        <button class="primary-btn" id="checkout-pickup-submit" type="button">Valider la commande</button>
+      </div>
+    </section>
+
     <!-- Ecran 4 : confirmation -->
     <section class="screen" id="screen-confirm">
       <h2 class="screen-title">Confirmation</h2>

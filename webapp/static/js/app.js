@@ -643,11 +643,49 @@ async function removeItem(itemUUID) {
 }
 
 /* ---------- Commande ---------- */
-async function checkout() {
+async function openCheckoutPickup() {
   $("go-checkout").disabled = true;
-  toast("Validation du panier…");
   try {
-    const data = await api("/api/checkout", {});
+    const bounds = await api("/api/checkout/pickup-bounds");
+    const timeEl = $("checkout-pickup-time");
+    const hint = $("checkout-pickup-hint");
+    if (!bounds.available) {
+      toast("Plus de créneau aujourd'hui (max 23h30).");
+      $("go-checkout").disabled = false;
+      return;
+    }
+    if (timeEl) {
+      timeEl.min = bounds.min || "00:00";
+      timeEl.max = bounds.max || "23:30";
+      // Propose l'heure min (maintenant) par defaut
+      if (!timeEl.value || timeEl.value < timeEl.min) {
+        timeEl.value = bounds.min;
+      }
+      if (timeEl.value > timeEl.max) timeEl.value = timeEl.max;
+    }
+    if (hint) {
+      hint.textContent =
+        `Créneau aujourd'hui entre ${bounds.min} et ${bounds.max} (heure de Paris).`;
+    }
+    showScreen("checkout-pickup");
+  } catch (e) {
+    toast(e.message || "Impossible de charger les créneaux");
+  } finally {
+    $("go-checkout").disabled = false;
+  }
+}
+
+async function checkout() {
+  const btn = $("checkout-pickup-submit") || $("go-checkout");
+  if (btn) btn.disabled = true;
+  toast("Validation du panier…");
+  const payload = {
+    nom: (($("checkout-nom") || {}).value || "").trim(),
+    prenom: (($("checkout-prenom") || {}).value || "").trim(),
+    pickupTime: (($("checkout-pickup-time") || {}).value || "").trim(),
+  };
+  try {
+    const data = await api("/api/checkout", payload);
     if (data.balance != null) {
       setBalance(data.balance, data.currency || state.currency || "EUR");
     }
@@ -655,7 +693,16 @@ async function checkout() {
     renderConfirm(data);
   } catch (e) {
     toast(e.message);
-    $("go-checkout").disabled = false;
+    if (btn) btn.disabled = false;
+    // Rafraichir bornes si heure refusee
+    try {
+      const bounds = await api("/api/checkout/pickup-bounds");
+      const timeEl = $("checkout-pickup-time");
+      if (timeEl && bounds.min) {
+        timeEl.min = bounds.min;
+        timeEl.max = bounds.max || "23:30";
+      }
+    } catch (err) {}
   }
 }
 
@@ -670,10 +717,15 @@ function renderConfirm(data) {
     data.total != null
       ? `<p class="info-note">Total : ${Number(data.total).toFixed(2)} ${escapeHtml(data.currency || "EUR")}</p>`
       : "";
+  const pickup = data.pickup || {};
+  const pickupHtml = (pickup.nom || pickup.prenom || pickup.time)
+    ? `<p class="info-note">Retrait : ${escapeHtml([pickup.prenom, pickup.nom].filter(Boolean).join(" "))} · ${escapeHtml(pickup.time || "")}</p>`
+    : "";
   box.innerHTML = `
     <p>Panier validé.</p>
     <div class="order-num">N° ${escapeHtml(String(data.orderNumber || "—"))}</div>
     ${total}
+    ${pickupHtml}
     <p class="info-note">Aucune commande KFC automatique — panier enregistré localement.</p>
     <button class="secondary-btn" id="back-menu">Nouvelle commande</button>`;
   $("back-menu").onclick = () => {
@@ -696,8 +748,17 @@ $("options-close").onclick = closeOptions;
 $("options-overlay").onclick = (e) => { if (e.target === $("options-overlay")) closeOptions(); };
 $("options-add").onclick = confirmOptions;
 $("cart-btn").onclick = () => { setNav(null); showScreen("cart"); refreshCart(); };
-$("go-checkout").onclick = checkout;
+$("go-checkout").onclick = openCheckoutPickup;
 $("back-to-search").onclick = backToSearch;
+const checkoutPickupBack = $("checkout-pickup-back");
+if (checkoutPickupBack) {
+  checkoutPickupBack.onclick = () => {
+    showScreen("cart");
+    refreshCart();
+  };
+}
+const checkoutPickupSubmit = $("checkout-pickup-submit");
+if (checkoutPickupSubmit) checkoutPickupSubmit.onclick = checkout;
 $("points-limit-close").onclick = closePointsLimitOverlay;
 $("points-limit-overlay").onclick = (e) => {
   if (e.target === $("points-limit-overlay")) closePointsLimitOverlay();
@@ -1377,9 +1438,18 @@ function openAdminOrderDetail(orderId) {
         .map((it) => `• ${it.quantity || 1}× ${it.name || it.loyaltyId || "?"}`)
         .join("\n");
       const place = [o.storeName, o.storeCity].filter(Boolean).join(" · ");
+      const pickupName = [o.pickupPrenom, o.pickupNom].filter(Boolean).join(" ");
+      let pickupTime = "";
+      if (o.pickupAt) {
+        const d = new Date(o.pickupAt);
+        pickupTime = Number.isNaN(d.getTime())
+          ? String(o.pickupAt)
+          : d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      }
       box.innerHTML = `
         <div class="info-line"><span>N°</span><span>${escapeHtml(String(o.orderNumber || o.id))}</span></div>
         <p class="info-note">Resto : ${escapeHtml(place || "—")}</p>
+        <p class="info-note">Retrait : ${escapeHtml(pickupName || "—")} · ${escapeHtml(pickupTime || "—")}</p>
         <p class="info-note">Points : ${escapeHtml(String(o.totalPoints != null ? o.totalPoints : "—"))}</p>
         <p class="info-note">Total : ${o.totalEur != null ? escapeHtml(Number(o.totalEur).toFixed(2)) + " EUR" : "—"}</p>
         <p class="info-note">User #${escapeHtml(String(o.userId != null ? o.userId : "—"))}</p>
@@ -1660,6 +1730,14 @@ function renderOrderCardHtml(o) {
     .map((it) => `• ${it.quantity || 1}× ${escapeHtml(it.name || it.loyaltyId || "?")}`)
     .join("<br/>");
   const place = [o.storeName, o.storeCity].filter(Boolean).join(" · ");
+  const pickupName = [o.pickupPrenom, o.pickupNom].filter(Boolean).join(" ");
+  let pickupTime = "";
+  if (o.pickupAt) {
+    const d = new Date(o.pickupAt);
+    pickupTime = Number.isNaN(d.getTime())
+      ? String(o.pickupAt)
+      : d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  }
   let extra = "";
   if (o.annulee) {
     extra = `<div class="ma-commande-banner cancel">Commande annulee</div>
@@ -1680,6 +1758,7 @@ function renderOrderCardHtml(o) {
       ${extra}
       <div class="info-line"><span>N°</span><span>${escapeHtml(String(o.orderNumber || o.id || "—"))}</span></div>
       <p class="info-note">${escapeHtml(place || "—")}</p>
+      <p class="info-note">Retrait : ${escapeHtml(pickupName || "—")} · ${escapeHtml(pickupTime || "—")}</p>
       <p class="info-note">${o.totalEur != null ? escapeHtml(Number(o.totalEur).toFixed(2)) + " EUR" : ""} ${o.totalPoints != null ? "· " + escapeHtml(String(o.totalPoints)) + " pts" : ""}</p>
       <div class="ma-commande-items">${items || "—"}</div>
     </div>`;
