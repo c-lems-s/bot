@@ -147,7 +147,7 @@ def _maybe_set_bot_commands() -> None:
         from webapp.bot_commands import sync_bot_commands
 
         if sync_bot_commands():
-            print("[boot] Menu commandes Telegram OK (/start public, /actif admin)")
+            print("[boot] Menu commandes Telegram OK (/start public, /actif+/version admin)")
         else:
             print("[boot] Menu commandes ignore / echec (non bloquant)")
     except Exception as e:

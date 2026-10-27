@@ -1,4 +1,4 @@
-"""Polling Telegram (commandes bot /start, /actif).
+"""Polling Telegram (commandes bot /start, /actif, /version).
 
 Lance en thread daemon depuis webapp.server, ou :
     python -m webapp.bot_poll
@@ -12,6 +12,7 @@ import time
 
 from webapp import bot_actif
 from webapp import bot_start
+from webapp import bot_version
 from webapp import telegram as tg
 
 log = logging.getLogger(__name__)
@@ -24,6 +25,9 @@ def process_update(update: dict) -> None:
     try:
         if bot_start.process_update(update):
             log.info("Update consomme par /start")
+            return
+        if bot_version.process_update(update):
+            log.info("Update consomme par /version")
             return
         if bot_actif.process_update(update):
             log.info("Update consomme par /actif")
@@ -39,7 +43,7 @@ def process_update(update: dict) -> None:
 
 def _poll_loop() -> None:
     global _offset
-    log.info("Telegram bot poll demarre (/start, /actif)")
+    log.info("Telegram bot poll demarre (/start, /actif, /version)")
     while True:
         try:
             updates = tg.get_updates(offset=_offset, timeout=25)

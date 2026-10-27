@@ -6,7 +6,7 @@ Usage :
 
 Scopes :
   - default / all users : uniquement /start
-  - chat admin          : /start + /actif (jamais propose aux users)
+  - chat admin          : /start + /actif + /version (jamais propose aux users)
 """
 
 from __future__ import annotations
@@ -33,11 +33,15 @@ ADMIN_ONLY_COMMANDS: List[Dict[str, str]] = [
         "command": "actif",
         "description": "Ouvrir ou fermer le shop (admin)",
     },
+    {
+        "command": "version",
+        "description": "Version déployée (admin)",
+    },
 ]
 
 
 def admin_commands() -> List[Dict[str, str]]:
-    """Liste complete pour le chat prive admin (/start + /actif)."""
+    """Liste complete pour le chat prive admin (/start + /actif + /version)."""
     return [*PUBLIC_COMMANDS, *ADMIN_ONLY_COMMANDS]
 
 
@@ -78,7 +82,7 @@ def sync_bot_commands() -> bool:
             log.error("setMyCommands (admin chat=%s) echoue", admin_id)
         else:
             log.info(
-                "Menu commandes : public=/start ; admin=%s → /start,/actif",
+                "Menu commandes : public=/start ; admin=%s → /start,/actif,/version",
                 admin_id,
             )
     else:
@@ -130,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("[+] Menu commandes Telegram OK")
     print("    Users  : /start")
-    print("    Admin  : /start, /actif (scope chat admin uniquement)")
+    print("    Admin  : /start, /actif, /version (scope chat admin uniquement)")
     return 0
 
 
