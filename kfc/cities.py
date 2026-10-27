@@ -1,7 +1,5 @@
 import unicodedata
 
-from .kfc_api import stores
-
 
 def RemoveAccents(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text)
@@ -32,15 +30,3 @@ def GetMatchingPlace(allStores, place):
     if len(matched) <= 0:
         return None
     return matched
-
-
-def SearchStores(place: str):
-    """Recherche des restos KFC à partir d'un texte (ville, nom, adresse).
-
-    Returns:
-        list[tuple[str, str, str]] | None : liste (name, city, id) ou None.
-    """
-    allStores = stores.GetAllStores()
-    if allStores is None:
-        return None
-    return GetMatchingPlace(allStores, place)

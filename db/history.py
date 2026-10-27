@@ -1,4 +1,4 @@
-"""Helpers d'écriture historique (ne fait jamais échouer le flux commande KFC)."""
+"""Helpers d'écriture historique (ne fait jamais échouer le flux checkout web)."""
 
 from __future__ import annotations
 
@@ -42,16 +42,6 @@ def save_submitted_order(
     except Exception as e:
         print(f"[!] Historique DB non enregistre (submit) : {e}")
         return None
-
-
-def mark_checked_in(order_uuid: str) -> bool:
-    try:
-        from db.repositories import orders as orders_repo
-
-        return orders_repo.update_status(order_uuid, "CHECKED_IN") > 0
-    except Exception as e:
-        print(f"[!] Historique DB non mis a jour (check-in) : {e}")
-        return False
 
 
 def list_recent(limit: int = 50, user_id: Optional[int] = None) -> List[Dict[str, Any]]:

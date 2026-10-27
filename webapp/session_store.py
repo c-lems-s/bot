@@ -1,8 +1,9 @@
 """
-Acces session courante + cache menuItems en memoire process.
+Acces session courante + cache menuItems.
 
-Remplace le STATE global mono-user.
-Compte KFC unique (table config) — pas de lock concurrence en V1.
+Le menu est persisté en Postgres (sessions.menu_json) pour rester
+disponible quel que soit le worker gunicorn qui traite la requete.
+Un cache memoire process reste un hot-path.
 """
 
 from __future__ import annotations
@@ -11,16 +12,38 @@ from typing import Any, Dict, List, Optional
 
 from db.repositories import sessions as sessions_repo
 
-# Cache menu fidélité par session_id (process local).
+# Cache menu fidélité par session_id (process local, hydrate depuis DB).
 _MENU_CACHE: Dict[int, Dict[str, Any]] = {}
 
 
 def set_menu_items(session_id: int, items_by_id: Dict[str, Any]) -> None:
-    _MENU_CACHE[int(session_id)] = items_by_id
+    sid = int(session_id)
+    payload = items_by_id or {}
+    _MENU_CACHE[sid] = payload
+    try:
+        sessions_repo.save_menu_json(sid, payload)
+    except Exception:
+        # Ne bloque pas le flux menu si l'écriture cache echoue ;
+        # le worker courant garde quand meme le menu en memoire.
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "save_menu_json echoue (session=%s)", sid
+        )
 
 
 def get_menu_items(session_id: int) -> Dict[str, Any]:
-    return _MENU_CACHE.get(int(session_id)) or {}
+    sid = int(session_id)
+    cached = _MENU_CACHE.get(sid)
+    if cached is not None:
+        return cached
+    try:
+        from_db = sessions_repo.get_menu_json(sid) or {}
+    except Exception:
+        from_db = {}
+    if from_db:
+        _MENU_CACHE[sid] = from_db
+    return from_db
 
 
 def find_menu_item(session_id: int, item_id: str) -> Optional[Dict[str, Any]]:
@@ -28,7 +51,16 @@ def find_menu_item(session_id: int, item_id: str) -> Optional[Dict[str, Any]]:
 
 
 def clear_menu_cache(session_id: int) -> None:
-    _MENU_CACHE.pop(int(session_id), None)
+    sid = int(session_id)
+    _MENU_CACHE.pop(sid, None)
+    try:
+        sessions_repo.save_menu_json(sid, {})
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "clear menu_json echoue (session=%s)", sid
+        )
 
 
 def cart_points(cart: List[Dict[str, Any]]) -> int:

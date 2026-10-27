@@ -43,14 +43,6 @@ def _decode_json(response):
     return json.loads(raw.decode("utf-8", errors="replace"))
 
 
-def GetStores(geohash: str):
-    url = f"https://api.kfc.fr/stores/{geohash}"
-    r, c = HTTPGet(url, headers=_HEADERS, timeout=20)
-    if r is None:
-        return None
-    return _decode_json(r)
-
-
 def GetAllStores(force: bool = False, retries: int = 3):
     """Liste complète des restos, avec cache mémoire et retries.
 

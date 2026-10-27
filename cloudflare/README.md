@@ -71,7 +71,7 @@ Dans `.env` :
 
 ```env
 TELEGRAM_BOT_TOKEN=...   # token BotFather
-ALLOW_DEV_AUTH=0         # en vrai usage Telegram
+# Auth Telegram uniquement (initData) — pas de mode DEV
 ```
 
 Redémarre `python -m webapp.server` après modification du `.env`.

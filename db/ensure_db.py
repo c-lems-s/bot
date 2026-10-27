@@ -1,4 +1,4 @@
-"""Cree la base kfc_perso si absente, puis applique les migrations."""
+"""Cree la base kfc_perso si absente (local), puis applique les migrations."""
 
 from __future__ import annotations
 
@@ -15,8 +15,17 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 os.environ.setdefault("PGCLIENTENCODING", "UTF8")
 
 
-def ensure_database() -> None:
-    """Cree la base si besoin, applique les migrations, importe la blacklist JSON legacy."""
+def _create_database_if_needed() -> None:
+    """Cree la DB locale en se connectant a la base ``postgres``.
+
+    Ignore si ``DATABASE_URL`` / cloud (base deja provisionnee).
+    """
+    from webapp.env import should_create_database
+
+    if not should_create_database():
+        print("[ensure_db] Creation DB ignoree (DATABASE_URL ou APP_ENV=cloud)")
+        return
+
     host = os.getenv("DB_HOST", "localhost")
     port = os.getenv("DB_PORT", "5432")
     user = os.getenv("DB_USER", "postgres")
@@ -34,6 +43,11 @@ def ensure_database() -> None:
         print(f"[+] Base creee : {dbname}")
     cur.close()
     conn.close()
+
+
+def ensure_database() -> None:
+    """Cree la base si besoin (local), applique les migrations, seeds legacy."""
+    _create_database_if_needed()
 
     from db.connection import close_pool, init_db
     from db.migrate import migrate

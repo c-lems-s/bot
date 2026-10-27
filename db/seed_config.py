@@ -26,7 +26,7 @@ def _legacy_path() -> str:
 def seed_config_from_file(path: str | None = None, *, force: bool = False) -> bool:
     """Upsert depuis JSON. Retourne True si un import a eu lieu.
 
-    Par defaut : n'ecrase pas si account_id DB deja renseigne (sauf force=True).
+    Par defaut : n'ecrase pas si une ligne config existe deja (sauf force=True).
     """
     from db.repositories import config as config_repo
     from kfc.config import clear_cache
@@ -40,12 +40,9 @@ def seed_config_from_file(path: str | None = None, *, force: bool = False) -> bo
         data: Dict[str, Any] = json.load(f)
 
     existing = config_repo.get()
-    current_aid = (existing.get("account_id") if existing else "") or ""
-    already = bool(current_aid.strip()) and not current_aid.startswith("VOTRE")
-    if already and not force:
+    if existing is not None and not force:
         print(
-            "[seed_config] Table config deja renseignee "
-            f"(account_id={current_aid}). "
+            "[seed_config] Table config deja renseignee. "
             "Relancez avec --force pour ecraser depuis le fichier."
         )
         return False
@@ -55,9 +52,9 @@ def seed_config_from_file(path: str | None = None, *, force: bool = False) -> bo
         cookies = {}
 
     try:
-        balance = float(data.get("balance", 0.98))
+        balance = float(data.get("balance", 0))
     except (TypeError, ValueError):
-        balance = 0.98
+        balance = 0.0
 
     try:
         reduction = float(data.get("reduction", 100))
@@ -75,6 +72,7 @@ def seed_config_from_file(path: str | None = None, *, force: bool = False) -> bo
         except (TypeError, ValueError):
             admin = existing.get("admin") if existing else None
 
+    # Colonnes legacy compte KFC conservees en schema : laissees vides.
     config_repo.upsert(
         account_id=str(data.get("account_id") or ""),
         authorization=str(data.get("authorization") or ""),
