@@ -137,6 +137,13 @@ def _unit_price_from_catalog(art: dict) -> float:
     return apply_reduction(original, get_reduction())
 
 
+def _catalog_prices(art: dict) -> tuple[float, float]:
+    """Retourne (prix_final, prix_catalogue) pour affichage barré."""
+    original = float(art["price"])
+    final = apply_reduction(original, get_reduction())
+    return final, original
+
+
 def _reprice_cart(cart: list, session_id: int | None = None) -> list:
     """Recalcule prix/points depuis le catalogue (+ menu session pour les pts)."""
     if not cart:
@@ -168,21 +175,23 @@ def _reprice_cart(cart: list, session_id: int | None = None) -> list:
             raise ValueError(
                 f"Article sans points catalogue : {e.get('name') or item_id}"
             )
+        final, original = _catalog_prices(art)
         entry = dict(e)
         entry["itemId"] = item_id
-        entry["price"] = _unit_price_from_catalog(art)
+        entry["price"] = final
+        entry["originalPrice"] = original
         entry["cost"] = cost
         entry["quantity"] = qty
         entry.pop("reduction", None)
-        entry.pop("originalPrice", None)
         priced.append(entry)
     return priced
 
 
 def _public_cart_items(cart: list) -> list:
-    """Payload panier pour le client : aucun %, aucun prix catalogue brut."""
-    return [
-        {
+    """Payload panier pour le client (prix final + catalogue pour affichage barré)."""
+    out = []
+    for e in cart:
+        item = {
             "id": e["uid"],
             "name": e["name"],
             "image": e.get("image", ""),
@@ -190,8 +199,15 @@ def _public_cart_items(cart: list) -> list:
             "quantity": e.get("quantity", 1),
             "price": e.get("price"),
         }
-        for e in cart
-    ]
+        original = e.get("originalPrice")
+        if (
+            original is not None
+            and e.get("price") is not None
+            and float(original) != float(e["price"])
+        ):
+            item["originalPrice"] = float(original)
+        out.append(item)
+    return out
 
 
 def _can_add_by_item(session_id: int, points_used: int) -> dict:
@@ -242,9 +258,10 @@ def _build_store_menu(store_menu, session_id: int, *, points_used: int = 0):
     for it in raw_items:
         item_id = str(it["id"])
         art = catalog.get(item_id)
+        original_price = None
         if art and art.get("price") is not None and str(art.get("label") or "").strip():
             label = str(art["label"]).strip()
-            price = _unit_price_from_catalog(art)
+            price, original_price = _catalog_prices(art)
             cost = art.get("cost")
             if cost is None:
                 cost = it.get("cost")
@@ -274,18 +291,23 @@ def _build_store_menu(store_menu, session_id: int, *, points_used: int = 0):
             cached["cost"] = cost_i
         menu_items[item_id] = cached
 
-        grouped[label].append(
-            {
-                "id": item_id,
-                "name": it["name"],
-                "cost": cost_i,
-                "price": price,
-                "available": available,
-                "canAdd": bool(available and can_add),
-                "image": it.get("image", ""),
-                "hasOptions": "modgrps" in it,
-            }
-        )
+        pub = {
+            "id": item_id,
+            "name": it["name"],
+            "cost": cost_i,
+            "price": price,
+            "available": available,
+            "canAdd": bool(available and can_add),
+            "image": it.get("image", ""),
+            "hasOptions": "modgrps" in it,
+        }
+        if (
+            original_price is not None
+            and price is not None
+            and float(original_price) != float(price)
+        ):
+            pub["originalPrice"] = float(original_price)
+        grouped[label].append(pub)
 
     session_store.set_menu_items(session_id, menu_items)
 
@@ -882,7 +904,7 @@ def api_add_item():
         ), 403
 
     try:
-        unit_price = _unit_price_from_catalog(art)
+        unit_price, original_price = _catalog_prices(art)
     except (TypeError, ValueError):
         return jsonify({"error": "Prix article invalide en catalogue."}), 500
 
@@ -927,6 +949,7 @@ def api_add_item():
             "options": options,
             "cost": cost,
             "price": unit_price,
+            "originalPrice": original_price,
             "quantity": 1,
             "kfc": {
                 "id": it["id"],

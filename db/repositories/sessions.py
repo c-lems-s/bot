@@ -56,7 +56,9 @@ def create_draft(
         cur.execute(
             """
             UPDATE sessions
-            SET status = 'IDLE', updated_at = NOW()
+            SET status = 'IDLE',
+                menu_json = '{}'::jsonb,
+                updated_at = NOW()
             WHERE user_id = %s AND status = 'DRAFT'
             """,
             (int(user_id),),
@@ -65,9 +67,9 @@ def create_draft(
             """
             INSERT INTO sessions (
                 user_id, status, store_id, store_name, store_city,
-                cart_json, last_order_json, updated_at
+                cart_json, last_order_json, menu_json, updated_at
             )
-            VALUES (%s, 'DRAFT', %s, %s, %s, '[]'::jsonb, NULL, NOW())
+            VALUES (%s, 'DRAFT', %s, %s, %s, '[]'::jsonb, NULL, '{}'::jsonb, NOW())
             RETURNING *
             """,
             (
@@ -78,6 +80,32 @@ def create_draft(
             ),
         )
         return _row_to_session(cur.fetchone())
+
+
+def get_menu_json(session_id: int) -> Dict[str, Any]:
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT menu_json FROM sessions WHERE id = %s",
+            (int(session_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {}
+        raw = row.get("menu_json")
+        return raw if isinstance(raw, dict) else {}
+
+
+def save_menu_json(session_id: int, menu: Dict[str, Any]) -> None:
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            UPDATE sessions
+            SET menu_json = %s::jsonb,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (json.dumps(menu or {}, ensure_ascii=False), int(session_id)),
+        )
 
 
 def save(

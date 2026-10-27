@@ -343,10 +343,18 @@ function renderMenu(categories) {
       } else if (overLimit) {
         priceHtml = `<div class="product-price soon">Limite panier atteinte</div>`;
       } else {
-        // Prix final serveur uniquement (pas de % / prix catalogue).
-        priceHtml = `<div class="product-price-row">
-             <span class="price-new">${Number(it.price).toFixed(2)} €</span>
-           </div>`;
+        // Affichage : prix catalogue barré si réduction ; prix final = source serveur.
+        const hasCut =
+          it.originalPrice != null &&
+          Number(it.originalPrice) !== Number(it.price);
+        priceHtml = hasCut
+          ? `<div class="product-price-row">
+               <span class="price-old">${Number(it.originalPrice).toFixed(2)} €</span>
+               <span class="price-new">${Number(it.price).toFixed(2)} €</span>
+             </div>`
+          : `<div class="product-price-row">
+               <span class="price-new">${Number(it.price).toFixed(2)} €</span>
+             </div>`;
       }
       card.innerHTML = `
         ${thumb}
@@ -615,7 +623,9 @@ function renderCart(data) {
       row.className = "cart-row";
       const price =
         it.price != null
-          ? `<span class="c-pts">${Number(it.price).toFixed(2)} ${currency}</span>`
+          ? (it.originalPrice != null && Number(it.originalPrice) !== Number(it.price)
+              ? `<span class="c-price-wrap"><span class="price-old">${Number(it.originalPrice).toFixed(2)}</span><span class="price-new">${Number(it.price).toFixed(2)} ${currency}</span></span>`
+              : `<span class="c-pts">${Number(it.price).toFixed(2)} ${currency}</span>`)
           : "";
       const opts = (it.options && it.options.length)
         ? `<div class="c-opts">${escapeHtml(it.options.join(" · "))}</div>`
