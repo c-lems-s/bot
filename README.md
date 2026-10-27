@@ -272,7 +272,7 @@ python -m webapp.boot && gunicorn -c gunicorn.conf.py webapp.wsgi:app
 | `python -m db.seed_config [--force]` | Import `config.json` → table `config` |
 | `python -m webapp.seed_admin_env` | Pose `config.admin` depuis `ADMIN_TELEGRAM_ID` |
 | `python -m webapp.set_webhook` | Enregistre le webhook Telegram (`PUBLIC_BASE_URL`) |
-| `python -m webapp.bot_commands` | Menu commandes (`/start` public, `/actif` admin) |
+| `python -m webapp.bot_commands` | Menu commandes (`/start` public, `/actif`+`/version` admin) |
 | `python -m webapp.smoke_deploy [--deep]` | Smoke test post-deploy (`/health`, `/`, webhook) |
 | `python -m webapp.server` | Mini-app web (Flask, local) |
 | `gunicorn -c gunicorn.conf.py webapp.wsgi:app` | Mini-app cloud |
